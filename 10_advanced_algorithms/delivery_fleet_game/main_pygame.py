@@ -282,8 +282,9 @@ class DeliveryFleetApp:
         }
 
         # Agent radio buttons - positioned in AGENTS panel
+        self.agent_list_top_offset = self.agent_panel.header_height + 10
         self.agent_radio_x = self.agent_panel.rect.x + 25
-        radio_y = self.agent_panel.rect.y + 40
+        radio_y = self.agent_panel.rect.y + self.agent_list_top_offset
         self.agent_radio_spacing = 35
         self.agent_radios = [
             RadioButton(self.agent_radio_x, radio_y, "Greedy", "agent", "greedy"),
@@ -293,8 +294,9 @@ class DeliveryFleetApp:
         ]
         self.agent_radios[0].selected = True
 
+        self.custom_agent_list_top_offset = self.custom_agent_panel.header_height + 10
         self.custom_radio_x = self.custom_agent_panel.rect.x + 25
-        custom_radio_y = self.custom_agent_panel.rect.y + 40
+        custom_radio_y = self.custom_agent_panel.rect.y + self.custom_agent_list_top_offset
         self.custom_radio_spacing = 35
         self.custom_agent_radios = [
             RadioButton(self.custom_radio_x, custom_radio_y, "Agent R", "agent", "agent_r"),
@@ -387,11 +389,11 @@ class DeliveryFleetApp:
             stat.y = row3
 
         # Update agent radio positions
-        agent_base = self.agent_panel.rect.y + 40
+        agent_base = self.agent_panel.rect.y + self.agent_list_top_offset
         for idx, radio in enumerate(self.agent_radios):
             radio.set_position(self.agent_radio_x, agent_base + idx * self.agent_radio_spacing)
 
-        custom_base = self.custom_agent_panel.rect.y + 40
+        custom_base = self.custom_agent_panel.rect.y + self.custom_agent_list_top_offset
         for idx, radio in enumerate(self.custom_agent_radios):
             radio.set_position(self.custom_radio_x, custom_base + idx * self.custom_radio_spacing)
 
