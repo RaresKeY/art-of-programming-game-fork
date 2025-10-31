@@ -1,32 +1,21 @@
 from typing import List
 from .base_agent import RouteAgent
 from ..models import Package, Vehicle, Route, DeliveryMap
-from ..core.router import Router
-import copy
+from ..core import Router
 
 
-class RAgent(RouteAgent):
+class CustomAgent(RouteAgent):
     def __init__(self, delivery_map: DeliveryMap):
-        super().__init__(delivery_map, "Agent R")
-        self.description = "custom agent R"
+        super().__init__(delivery_map, "Agent Name")
+        self.description = "custom agent"
         self.router = Router()
 
     def plan_routes(self, packages: List[Package], fleet: List[Vehicle]) -> List[Route]:
-        veh = copy.deepcopy(fleet)
-        boxes = copy.deepcopy(packages)
-
-        assigned_b = []
-        final_routes = []
-
-        for b in boxes:
-            for v in veh:
-                assigned_b.append(b)
-            final_routes.append(self._create_route(v, assigned_b))
-            assigned_b = []
+        final_routes: List[Route] = []
 
         return final_routes
-
-    def _create_route(self, vehicle: Vehicle, boxes: List[Package]) -> Route:
+    
+    def _create_route(self, vehicle: Vehicle, boxes: List[Package]):
         route = Route(vehicle=vehicle, 
                       packages=boxes, 
                       stops=[b.destination for b in boxes],
