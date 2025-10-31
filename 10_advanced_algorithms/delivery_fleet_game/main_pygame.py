@@ -20,7 +20,7 @@ from src.core import GameEngine
 from src.agents import GreedyAgent, BacktrackingAgent, PruningBacktrackingAgent, StudentAgent
 from src.ui.constants import *
 from src.ui.map_renderer import MapRenderer
-from src.ui.components import Button, Panel, StatDisplay, RadioButton, Tooltip
+from src.ui.components import Button, Panel, CollapsiblePanel, StatDisplay, RadioButton, Tooltip
 from src.ui.font_utils import render_text
 from src.ui.manual_mode import ManualModeManager
 from src.utils.metrics import calculate_route_metrics
@@ -205,6 +205,12 @@ class DeliveryFleetApp:
         """Register all routing agents."""
         self.engine.register_agent("greedy", GreedyAgent(self.engine.delivery_map))
         self.engine.register_agent("greedy_2opt", GreedyAgent(self.engine.delivery_map, use_2opt=True))
+        try:
+            from src.agents.agent_r import RAgent
+
+            self.engine.register_agent("agent_r", RAgent(self.engine.delivery_map))
+        except Exception as exc:
+            print(f"⚠️ Failed to register Agent R: {exc}")
         self.engine.register_agent("backtracking", BacktrackingAgent(self.engine.delivery_map, max_packages=12))
         self.engine.register_agent("pruning_backtracking",
                                    PruningBacktrackingAgent(self.engine.delivery_map, max_packages=15))
@@ -218,37 +224,37 @@ class DeliveryFleetApp:
         SIDEBAR_START = 100  # Below title bar
 
         # Panels - Carefully calculated to prevent overlaps
-        self.stats_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START, SIDEBAR_WIDTH - 20, 200, "GAME STATUS")
+        self.stats_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START, SIDEBAR_WIDTH - 20, 200, "GAME STATUS")
         self.mode_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 190, SIDEBAR_WIDTH - 20, 85, "MODE")
-        self.agent_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 285, SIDEBAR_WIDTH - 20, 250, "AGENTS")  # Increased for student agents
-        self.controls_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 545, SIDEBAR_WIDTH - 20, 320, "CONTROLS")  # Adjusted position
+        self.agent_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START + 285, SIDEBAR_WIDTH - 20, 180, "AGENTS")
+        self.custom_agent_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START + 475, SIDEBAR_WIDTH - 20, 120, "CUSTOM AGENTS")
+        self.controls_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 605, SIDEBAR_WIDTH - 20, 330, "CONTROLS")
 
         # Warning message area - positioned below controls panel
-        self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 845, SIDEBAR_WIDTH - 20, 80)
+        self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 955, SIDEBAR_WIDTH - 20, 80)
 
         # Stats - Organized in clear rows
-        stat_col1 = SIDEBAR_X + 25
+        self.stat_col1 = SIDEBAR_X + 25
         stat_col_width = (SIDEBAR_WIDTH - 70) // 3
-        stat_col2 = stat_col1 + stat_col_width
-        stat_col3 = stat_col2 + stat_col_width
-        stat_row1_y = SIDEBAR_START + 40
-        stat_row2_y = SIDEBAR_START + 95
-        stat_row3_y = SIDEBAR_START + 145
+        self.stat_col2 = self.stat_col1 + stat_col_width
+        self.stat_col3 = self.stat_col2 + stat_col_width
+        self.stats_row_offsets = (40, 95, 145)
+        self.stats_divider_offsets = (85, 140)
 
         # Row 1: Day, Balance, Popularity
-        self.day_stat = StatDisplay(stat_col1, stat_row1_y, "Day:", "1")
-        self.balance_stat = StatDisplay(stat_col2, stat_row1_y, "Balance:", "$100K")
-        self.popularity_stat = StatDisplay(stat_col3, stat_row1_y, "Popularity:", "300")
+        self.day_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[0], "Day:", "1")
+        self.balance_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[0], "Balance:", "$100K")
+        self.popularity_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[0], "Popularity:", "300")
 
         # Row 2: Fleet and Packages
-        self.fleet_stat = StatDisplay(stat_col1, stat_row2_y, "Fleet:", "2 veh")
-        self.packages_stat = StatDisplay(stat_col2, stat_row2_y, "Pending:", "0")
-        self.capacity_stat = StatDisplay(stat_col3, stat_row2_y, "Capacity:", "0/0")
+        self.fleet_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[1], "Fleet:", "2 veh")
+        self.packages_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[1], "Pending:", "0")
+        self.capacity_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[1], "Capacity:", "0/0")
 
         # Row 3: Planned route metrics (visible when routes are planned)
-        self.planned_cost_stat = StatDisplay(stat_col1, stat_row3_y, "Cost:", "$0")
-        self.planned_revenue_stat = StatDisplay(stat_col2, stat_row3_y, "Revenue:", "$0")
-        self.planned_profit_stat = StatDisplay(stat_col3, stat_row3_y, "Profit:", "$0")
+        self.planned_cost_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[2], "Cost:", "$0")
+        self.planned_revenue_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[2], "Revenue:", "$0")
+        self.planned_profit_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[2], "Profit:", "$0")
 
         # Store planned metrics
         self.planned_metrics = None
@@ -259,21 +265,33 @@ class DeliveryFleetApp:
         mode_btn_width = (SIDEBAR_WIDTH - 60) // 2
         self.mode_auto_btn = Button(mode_btn_x, mode_btn_y, mode_btn_width, 35, "AUTO", self.on_mode_auto)
         self.mode_manual_btn = Button(mode_btn_x + mode_btn_width + 10, mode_btn_y, mode_btn_width, 35, "MANUAL", self.on_mode_manual)
+        self._mode_button_offsets = {
+            'mode_auto': (self.mode_auto_btn.rect.x - self.mode_panel.rect.x,
+                          self.mode_auto_btn.rect.y - self.mode_panel.rect.y),
+            'mode_manual': (self.mode_manual_btn.rect.x - self.mode_panel.rect.x,
+                            self.mode_manual_btn.rect.y - self.mode_panel.rect.y)
+        }
 
         # Agent radio buttons - positioned in AGENTS panel
-        radio_x = SIDEBAR_X + 35
+        self.agent_radio_x = SIDEBAR_X + 35
         radio_y = SIDEBAR_START + 325
+        self.agent_radio_spacing = 35
         self.agent_radios = [
-            RadioButton(radio_x, radio_y, "Greedy", "agent", "greedy"),
-            RadioButton(radio_x, radio_y + 35, "Greedy+2opt", "agent", "greedy_2opt"),
-            RadioButton(radio_x, radio_y + 70, "Backtrack", "agent", "backtracking"),
-            RadioButton(radio_x, radio_y + 105, "Pruning BT", "agent", "pruning_backtracking"),
-            RadioButton(radio_x, radio_y + 140, "Student", "agent", "student"),
-            RadioButton(radio_x, radio_y + 175, "Student+2opt", "agent", "student_2opt"),
+            RadioButton(self.agent_radio_x, radio_y, "Greedy", "agent", "greedy"),
+            RadioButton(self.agent_radio_x, radio_y + 35, "Greedy+2opt", "agent", "greedy_2opt"),
+            RadioButton(self.agent_radio_x, radio_y + 70, "Backtrack", "agent", "backtracking"),
+            RadioButton(self.agent_radio_x, radio_y + 105, "Pruning BT", "agent", "pruning_backtracking"),
         ]
         self.agent_radios[0].selected = True
 
-        for radio in self.agent_radios:
+        self.custom_radio_x = SIDEBAR_X + 35
+        custom_radio_y = SIDEBAR_START + 515
+        self.custom_radio_spacing = 35
+        self.custom_agent_radios = [
+            RadioButton(self.custom_radio_x, custom_radio_y, "Agent R", "agent", "agent_r"),
+        ]
+
+        for radio in self.agent_radios + self.custom_agent_radios:
             if radio.value in self.disabled_agents:
                 radio.set_enabled(False)
                 radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
@@ -282,42 +300,108 @@ class DeliveryFleetApp:
 
         # Control buttons - positioned in CONTROLS panel
         btn_x = SIDEBAR_X + 25
-        btn_y = SIDEBAR_START + 585  # Adjusted for new panel position
+        btn_y = SIDEBAR_START + 625
         btn_width = SIDEBAR_WIDTH - 50
         btn_small_width = (btn_width - 10) // 2
         btn_height = 35
         btn_spacing = 38
         speed_btn_width = (btn_width - 20) // 3
 
+        speed_btn_width = 50
+        speed_btn_height = 30
+        speed_spacing = 10
+        autoplay_y = btn_y + btn_spacing * 2
+        speed_x_start = btn_x + btn_width - (speed_btn_width * 3 + speed_spacing * 2)
+
         self.buttons = {
             'buy_vehicle': Button(btn_x, btn_y, btn_width, btn_height, "Buy Vehicle", self.on_buy_vehicle),
             'execute': Button(btn_x, btn_y + btn_spacing, btn_small_width, btn_height, "Execute", self.on_execute_day),
             'next_day': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing, btn_small_width, btn_height, "Next", self.on_next_day),
-            'autoplay': Button(btn_x, btn_y + btn_spacing * 2, btn_width, btn_height, "Auto Play", self.toggle_autoplay),
-            'speed1': Button(btn_x, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "1x", lambda: self.set_autoplay_speed(1)),
-            'speed2': Button(btn_x + speed_btn_width + 10, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "2x", lambda: self.set_autoplay_speed(2)),
-            'speed3': Button(btn_x + (speed_btn_width + 10) * 2, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "3x", lambda: self.set_autoplay_speed(3)),
+            'autoplay': Button(btn_x, autoplay_y, btn_width - (speed_btn_width * 3 + speed_spacing * 2 + 20), btn_height, "Auto Play", self.toggle_autoplay),
+            'speed1': Button(speed_x_start, autoplay_y + (btn_height - speed_btn_height) // 2, speed_btn_width, speed_btn_height, "1x", lambda: self.set_autoplay_speed(1)),
+            'speed2': Button(speed_x_start + (speed_btn_width + speed_spacing), autoplay_y + (btn_height - speed_btn_height) // 2, speed_btn_width, speed_btn_height, "2x", lambda: self.set_autoplay_speed(2)),
+            'speed3': Button(speed_x_start + 2 * (speed_btn_width + speed_spacing), autoplay_y + (btn_height - speed_btn_height) // 2, speed_btn_width, speed_btn_height, "3x", lambda: self.set_autoplay_speed(3)),
             'save': Button(btn_x, btn_y + btn_spacing * 4, btn_small_width, btn_height, "Save", self.on_save),
             'load': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing * 4, btn_small_width, btn_height, "Load", self.on_load),
             'marketing': Button(btn_x, btn_y + btn_spacing * 5, btn_width, btn_height, "Marketing", self.on_show_marketing),
+        }
+
+        # Store offsets relative to controls panel for reflow
+        self._control_button_offsets = {
+            name: (button.rect.x - self.controls_panel.rect.x, button.rect.y - self.controls_panel.rect.y)
+            for name, button in self.buttons.items()
         }
 
         # Set initial states
         self.buttons['execute'].enabled = False
         self.buttons['next_day'].enabled = False
         self._refresh_speed_buttons()
+        self._reflow_sidebar_layout()
 
     # ==================== EVENT HANDLERS ====================
 
+    def _panel_effective_height(self, panel: Panel) -> int:
+        if isinstance(panel, CollapsiblePanel):
+            return panel.header_height if panel.collapsed else panel.full_height
+        return panel.rect.height
+
+    def _reflow_sidebar_layout(self) -> None:
+        y = getattr(self, "sidebar_start", 100)
+        gap = 10
+
+        for panel in (self.stats_panel, self.mode_panel, self.agent_panel, self.custom_agent_panel, self.controls_panel):
+            panel.rect.y = y
+            y += self._panel_effective_height(panel) + gap
+
+        # Reposition warning area beneath controls
+        self.warning_rect.y = self.controls_panel.rect.y + self.controls_panel.rect.height + 20
+
+        # Update stat display positions
+        base_y_row1 = self.stats_panel.rect.y + self.stats_row_offsets[0]
+        row2 = self.stats_panel.rect.y + self.stats_row_offsets[1]
+        row3 = self.stats_panel.rect.y + self.stats_row_offsets[2]
+
+        for stat in (self.day_stat, self.balance_stat, self.popularity_stat):
+            stat.y = base_y_row1
+        for stat in (self.fleet_stat, self.packages_stat, self.capacity_stat):
+            stat.y = row2
+        for stat in (self.planned_cost_stat, self.planned_revenue_stat, self.planned_profit_stat):
+            stat.y = row3
+
+        # Update agent radio positions
+        agent_base = self.agent_panel.rect.y + 40
+        for idx, radio in enumerate(self.agent_radios):
+            radio.set_position(self.agent_radio_x, agent_base + idx * self.agent_radio_spacing)
+
+        custom_base = self.custom_agent_panel.rect.y + 40
+        for idx, radio in enumerate(self.custom_agent_radios):
+            radio.set_position(self.custom_radio_x, custom_base + idx * self.custom_radio_spacing)
+
+        # Reposition mode buttons relative to mode panel
+        if self._mode_button_offsets:
+            offset_auto = self._mode_button_offsets['mode_auto']
+            offset_manual = self._mode_button_offsets['mode_manual']
+            self.mode_auto_btn.rect.x = self.mode_panel.rect.x + offset_auto[0]
+            self.mode_auto_btn.rect.y = self.mode_panel.rect.y + offset_auto[1]
+            self.mode_manual_btn.rect.x = self.mode_panel.rect.x + offset_manual[0]
+            self.mode_manual_btn.rect.y = self.mode_panel.rect.y + offset_manual[1]
+
+        # Reposition buttons relative to controls panel
+        for name, button in self.buttons.items():
+            offset_x, offset_y = self._control_button_offsets[name]
+            button.rect.x = self.controls_panel.rect.x + offset_x
+            button.rect.y = self.controls_panel.rect.y + offset_y
+
     def _ensure_valid_agent_selection(self):
         """Select the first available agent if current selection is disabled."""
-        if any(r.value == self.selected_agent and r.enabled for r in self.agent_radios):
+        all_radios = self.agent_radios + self.custom_agent_radios
+        if any(r.value == self.selected_agent and r.enabled for r in all_radios):
             return
 
-        for radio in self.agent_radios:
+        for radio in all_radios:
             radio.selected = False
 
-        for radio in self.agent_radios:
+        for radio in all_radios:
             if radio.enabled:
                 radio.selected = True
                 self.selected_agent = radio.value
@@ -405,8 +489,9 @@ class DeliveryFleetApp:
     def update_agent_previews(self, metrics_override: Optional[dict] = None) -> None:
         """Update agent radio labels with projected profit values."""
         state = self.engine.game_state
+        all_radios = self.agent_radios + self.custom_agent_radios
         if not state or not state.packages_pending:
-            for radio in self.agent_radios:
+            for radio in all_radios:
                 if radio.value in self.disabled_agents:
                     radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
                 else:
@@ -417,7 +502,7 @@ class DeliveryFleetApp:
         if metrics_override and metrics_override.get('agent_name'):
             previews[metrics_override['agent_name']] = metrics_override
 
-        for radio in self.agent_radios:
+        for radio in all_radios:
             if radio.value in self.disabled_agents or radio.value in previews:
                 continue
             metrics = self._simulate_agent_metrics(radio.value)
@@ -426,7 +511,7 @@ class DeliveryFleetApp:
 
         self.agent_metrics_preview = previews
 
-        for radio in self.agent_radios:
+        for radio in all_radios:
             if radio.value in self.disabled_agents:
                 radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
                 continue
@@ -1175,13 +1260,23 @@ class DeliveryFleetApp:
                 self.comparison_modal.handle_event(event)
                 continue
 
+            # Collapsible panels
+            toggled = False
+            for panel in (self.stats_panel, self.agent_panel, self.custom_agent_panel):
+                if isinstance(panel, CollapsiblePanel) and panel.handle_event(event):
+                    toggled = True
+            if toggled:
+                self._reflow_sidebar_layout()
+                continue
+
             # Regular button events
             for button in self.buttons.values():
                 button.handle_event(event)
 
             # Mode toggle buttons
-            self.mode_auto_btn.handle_event(event)
-            self.mode_manual_btn.handle_event(event)
+            if not (isinstance(self.mode_panel, CollapsiblePanel) and self.mode_panel.collapsed):
+                self.mode_auto_btn.handle_event(event)
+                self.mode_manual_btn.handle_event(event)
 
             # Manual mode events
             if self.mode == "MANUAL" and self.manual_mode_manager and self.manual_mode_manager.active:
@@ -1229,18 +1324,42 @@ class DeliveryFleetApp:
 
             # Radio buttons
             if event.type == pygame.MOUSEBUTTONDOWN:
-                for i, radio in enumerate(self.agent_radios):
-                    if radio.handle_event(event):
-                        for j, other in enumerate(self.agent_radios):
-                            if i != j:
-                                other.selected = False
-                        self.selected_agent = radio.value
-                        if self.mode == "AUTO":
-                            self.auto_plan_routes(show_feedback=True)
+                all_radios = self.agent_radios + self.custom_agent_radios
+                if not self.agent_panel.collapsed:
+                    for i, radio in enumerate(self.agent_radios):
+                        if radio.handle_event(event):
+                            for other in all_radios:
+                                if other is not radio:
+                                    other.selected = False
+                            self.selected_agent = radio.value
+                            if self.mode == "AUTO":
+                                self.auto_plan_routes(show_feedback=True)
+                            break
+                if not self.custom_agent_panel.collapsed:
+                    for radio in self.custom_agent_radios:
+                        if radio.handle_event(event):
+                            for other in all_radios:
+                                if other is not radio:
+                                    other.selected = False
+                            self.selected_agent = radio.value
+                            if self.mode == "AUTO":
+                                self.auto_plan_routes(show_feedback=True)
+                            break
 
             if event.type == pygame.MOUSEMOTION:
-                for radio in self.agent_radios:
-                    radio.handle_event(event)
+                if not self.agent_panel.collapsed:
+                    for radio in self.agent_radios:
+                        radio.handle_event(event)
+                else:
+                    for radio in self.agent_radios:
+                        radio.hovered = False
+
+                if not self.custom_agent_panel.collapsed:
+                    for radio in self.custom_agent_radios:
+                        radio.handle_event(event)
+                else:
+                    for radio in self.custom_agent_radios:
+                        radio.hovered = False
 
                 # Check for hover over packages/vehicles
                 self.update_hover_tooltip(event.pos)
@@ -1436,60 +1555,61 @@ class DeliveryFleetApp:
         self.stats_panel.render(self.screen)
         self.mode_panel.render(self.screen)
         self.agent_panel.render(self.screen)
+        self.custom_agent_panel.render(self.screen)
         self.controls_panel.render(self.screen)
 
-        # Stats - Row 1
-        self.day_stat.render(self.screen)
-        self.balance_stat.render(self.screen)
-        self.popularity_stat.render(self.screen)
+        if not self.stats_panel.collapsed:
+            self.day_stat.render(self.screen)
+            self.balance_stat.render(self.screen)
+            self.popularity_stat.render(self.screen)
 
-        # Divider line after row 1
-        divider_y = self.stats_panel.rect.y + 85
-        pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
-                        (SIDEBAR_X + 25, divider_y),
-                        (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y), 1)
+            divider_y = self.stats_panel.rect.y + 85
+            pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
+                            (SIDEBAR_X + 25, divider_y),
+                            (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y), 1)
 
-        # Stats - Row 2
-        self.fleet_stat.render(self.screen)
-        self.packages_stat.render(self.screen)
-        self.capacity_stat.render(self.screen)
+            self.fleet_stat.render(self.screen)
+            self.packages_stat.render(self.screen)
+            self.capacity_stat.render(self.screen)
 
-        # Divider line after row 2
-        divider_y2 = self.stats_panel.rect.y + 140
-        pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
-                        (SIDEBAR_X + 25, divider_y2),
-                        (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y2), 1)
+            divider_y2 = self.stats_panel.rect.y + 140
+            pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
+                            (SIDEBAR_X + 25, divider_y2),
+                            (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y2), 1)
 
-        # Planned route metrics
-        self.planned_cost_stat.render(self.screen)
-        self.planned_revenue_stat.render(self.screen)
-        self.planned_profit_stat.render(self.screen)
+            self.planned_cost_stat.render(self.screen)
+            self.planned_revenue_stat.render(self.screen)
+            self.planned_profit_stat.render(self.screen)
 
         # Mode toggle buttons
-        self.mode_auto_btn.render(self.screen)
-        self.mode_manual_btn.render(self.screen)
+        if not isinstance(self.mode_panel, CollapsiblePanel) or not self.mode_panel.collapsed:
+            self.mode_auto_btn.render(self.screen)
+            self.mode_manual_btn.render(self.screen)
 
-        # Highlight selected mode
-        if self.mode == "AUTO":
-            highlight_rect = pygame.Rect(
-                self.mode_auto_btn.rect.x - 2,
-                self.mode_auto_btn.rect.y - 2,
-                self.mode_auto_btn.rect.width + 4,
-                self.mode_auto_btn.rect.height + 4
-            )
-            pygame.draw.rect(self.screen, Colors.TEXT_ACCENT, highlight_rect, 3, border_radius=7)
-        else:
-            highlight_rect = pygame.Rect(
-                self.mode_manual_btn.rect.x - 2,
-                self.mode_manual_btn.rect.y - 2,
-                self.mode_manual_btn.rect.width + 4,
-                self.mode_manual_btn.rect.height + 4
-            )
+            # Highlight selected mode
+            if self.mode == "AUTO":
+                highlight_rect = pygame.Rect(
+                    self.mode_auto_btn.rect.x - 2,
+                    self.mode_auto_btn.rect.y - 2,
+                    self.mode_auto_btn.rect.width + 4,
+                    self.mode_auto_btn.rect.height + 4
+                )
+            else:
+                highlight_rect = pygame.Rect(
+                    self.mode_manual_btn.rect.x - 2,
+                    self.mode_manual_btn.rect.y - 2,
+                    self.mode_manual_btn.rect.width + 4,
+                    self.mode_manual_btn.rect.height + 4
+                )
             pygame.draw.rect(self.screen, Colors.TEXT_ACCENT, highlight_rect, 3, border_radius=7)
 
-        # Radios (only show in AUTO mode)
-        if self.mode == "AUTO":
+        # Standard agent radios
+        if not self.agent_panel.collapsed:
             for radio in self.agent_radios:
+                radio.render(self.screen)
+
+        if not self.custom_agent_panel.collapsed:
+            for radio in self.custom_agent_radios:
                 radio.render(self.screen)
 
         # Buttons
