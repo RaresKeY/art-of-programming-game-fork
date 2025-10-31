@@ -192,6 +192,7 @@ class DeliveryFleetApp:
         self.planned_routes = []
         self.package_status = {}
         self.agent_metrics_preview = {}
+        self.render_routes = []
 
         # Start new game
         self.engine.new_game()
@@ -299,9 +300,11 @@ class DeliveryFleetApp:
         self._ensure_valid_agent_selection()
 
         # Control buttons - positioned in CONTROLS panel
-        btn_x = SIDEBAR_X + 25
-        btn_y = SIDEBAR_START + 625
-        btn_width = SIDEBAR_WIDTH - 50
+        panel_inner_x = self.controls_panel.rect.x + 15
+        panel_inner_y = self.controls_panel.rect.y + 55  # Leave space for panel title
+        btn_x = panel_inner_x
+        btn_y = panel_inner_y
+        btn_width = self.controls_panel.rect.width - 30
         btn_small_width = (btn_width - 10) // 2
         btn_height = 35
         btn_spacing = 38
@@ -441,6 +444,8 @@ class DeliveryFleetApp:
         print("\n[UI] Starting day...")
         self.engine.start_day()
 
+        self.render_routes = []
+
         if not self.engine.game_state.packages_pending:
             self.show_warning("No packages for this day!", Colors.TEXT_ACCENT)
             return
@@ -454,8 +459,23 @@ class DeliveryFleetApp:
             self.show_day_summary(total_volume, fleet_capacity)
         else:
             if self.mode == "AUTO":
-                self.auto_plan_routes(show_feedback=True)
+                if self.autoplay_enabled:
+                    self.auto_plan_routes(show_feedback=True)
+                else:
+                    total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
+                    fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
+                    if fleet_capacity <= 0 or total_volume > fleet_capacity:
+                        self.show_day_summary(total_volume, fleet_capacity)
+                    else:
+                        self.show_day_preview(total_volume, fleet_capacity)
             else:
+                if not self.autoplay_enabled:
+                    total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
+                    fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
+                    if fleet_capacity <= 0 or total_volume > fleet_capacity:
+                        self.show_day_summary(total_volume, fleet_capacity)
+                    else:
+                        self.show_day_preview(total_volume, fleet_capacity)
                 self.show_warning("Manual mode: build routes then execute.", Colors.TEXT_ACCENT)
 
         self.update_agent_previews()
@@ -546,6 +566,7 @@ class DeliveryFleetApp:
         metrics = self._simulate_agent_metrics(agent_name)
         if metrics and metrics.get('routes'):
             self.planned_routes = metrics['routes']
+            self.render_routes = list(self.planned_routes)
             self.planned_metrics = metrics
             self.engine.apply_agent_solution(agent_name)
             self.buttons['execute'].enabled = True
@@ -560,6 +581,7 @@ class DeliveryFleetApp:
             self.planned_metrics = None
             self.engine.game_state.set_routes([])
             self.buttons['execute'].enabled = False
+            self.render_routes = []
             self._update_planned_metrics_display()
             if show_feedback:
                 self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
@@ -702,7 +724,16 @@ class DeliveryFleetApp:
         modal_btn_y = self.day_summary_modal.y + 480
         buttons = [
             Button(modal_btn_x, modal_btn_y, 220, 40, "Buy Vehicles", lambda: self.close_day_summary_and_buy(total_volume, fleet_capacity)),
-            Button(modal_btn_x + 240, modal_btn_y, 180, 40, "Continue", lambda: self.close_day_summary_with_warning(total_volume, fleet_capacity)),
+            Button(
+                modal_btn_x + 240,
+                modal_btn_y,
+                180,
+                40,
+                "Continue",
+                lambda: self.close_day_summary_with_warning(total_volume, fleet_capacity)
+                if self.autoplay_enabled
+                else self.close_day_summary_manual(total_volume, fleet_capacity),
+            ),
         ]
 
         self.day_summary_modal.show(content, buttons)
@@ -716,6 +747,22 @@ class DeliveryFleetApp:
         """Close day summary and show capacity warning."""
         self.day_summary_modal.hide()
         self.show_capacity_warning(needed, available)
+
+    def close_day_summary_manual(self, needed: float, available: float):
+        """Close day summary in manual flow and show guidance."""
+        self.day_summary_modal.hide()
+        self.update_agent_previews()
+        if self.mode == "MANUAL":
+            self.buttons['execute'].enabled = True
+        shortage = needed - available
+        if shortage > 0:
+            message = (
+                f"Manual planning: shortage {shortage:.1f}m³. "
+                "Plan carefully or assign fewer packages."
+            )
+            self.show_warning(message, Colors.TEXT_ACCENT)
+        else:
+            self.show_warning("Manual planning: review packages and build routes.", Colors.TEXT_ACCENT)
 
     def show_capacity_warning(self, needed: float, available: float):
         """Show warning when capacity is insufficient."""
@@ -754,6 +801,28 @@ class DeliveryFleetApp:
         ]
 
         self.capacity_warning_modal.show(content, buttons)
+    def show_day_preview(self, total_volume: float, fleet_capacity: float):
+        """Preview upcoming day when capacity is sufficient."""
+        state = self.engine.game_state
+        utilization_pct = (total_volume / fleet_capacity * 100) if fleet_capacity > 0 else 0
+
+        content = [
+            (f"Day {state.current_day}: daily preview", Colors.TEXT_ACCENT),
+            ("", Colors.TEXT_PRIMARY),
+            (f"Packages volume: {total_volume:.1f} m³", Colors.TEXT_PRIMARY),
+            (f"Fleet capacity: {fleet_capacity:.1f} m³", Colors.TEXT_PRIMARY),
+            (f"Utilization: {utilization_pct:.0f}% of capacity", Colors.TEXT_SECONDARY),
+            ("", Colors.TEXT_PRIMARY),
+            ("Plan routes manually or run an agent.", Colors.TEXT_ACCENT),
+        ]
+
+        modal_btn_x = self.day_summary_modal.x + 160
+        modal_btn_y = self.day_summary_modal.y + 480
+        buttons = [
+            Button(modal_btn_x, modal_btn_y, 220, 40, "Start Planning", lambda: self.day_summary_modal.hide()),
+        ]
+
+        self.day_summary_modal.show(content, buttons)
 
     def close_modal_and_buy(self):
         """Close modal and open buy vehicle."""
@@ -860,6 +929,8 @@ class DeliveryFleetApp:
                     return
 
         print("\n[UI] Executing day...")
+        if self.planned_routes:
+            self.render_routes = list(self.planned_routes)
         self.engine.execute_day(self.selected_agent)
 
         for pkg in self.engine.game_state.packages_delivered:
@@ -1440,8 +1511,9 @@ class DeliveryFleetApp:
                 status = self.package_status.get(pkg.id, "pending")
                 self.map_renderer.render_package(pkg, status)
 
-        if self.planned_routes:
-            for i, route in enumerate(self.planned_routes):
+        routes_to_draw = self.planned_routes if self.planned_routes else self.render_routes
+        if routes_to_draw:
+            for i, route in enumerate(routes_to_draw):
                 # Assign distinct color to each route
                 route_color = Colors.ROUTE_COLORS[i % len(Colors.ROUTE_COLORS)]
                 self.map_renderer.render_route(route, color=route_color, style="solid")
