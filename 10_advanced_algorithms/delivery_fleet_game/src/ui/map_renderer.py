@@ -9,6 +9,7 @@ import math
 from typing import Tuple, List, Optional
 from ..models import DeliveryMap, Package, Route, Vehicle
 from .constants import *
+from .font_utils import render_text
 
 
 class MapRenderer:
@@ -121,20 +122,16 @@ class MapRenderer:
             )
 
     def _draw_axes(self):
-        """Draw coordinate axes labels."""
-        font = pygame.font.Font(None, FontSizes.TINY + 8)
-
-        # X-axis labels
+        """Draw coordinate axes labels using JetBrains Mono."""
         for x_km in range(0, int(self.world_width) + 1, 20):
             x_screen, y_screen = self.world_to_screen((x_km, 0))
-            text = font.render(f"{x_km}", True, Colors.TEXT_SECONDARY)
-            self.surface.blit(text, (x_screen - 10, y_screen + 5))
+            text = render_text(f"{x_km}", FontSizes.TINY, Colors.TEXT_SECONDARY)
+            self.surface.blit(text, (x_screen - text.get_width() // 2, y_screen + 6))
 
-        # Y-axis labels
         for y_km in range(0, int(self.world_height) + 1, 20):
             x_screen, y_screen = self.world_to_screen((0, y_km))
-            text = font.render(f"{y_km}", True, Colors.TEXT_SECONDARY)
-            self.surface.blit(text, (x_screen - 25, y_screen - 8))
+            text = render_text(f"{y_km}", FontSizes.TINY, Colors.TEXT_SECONDARY)
+            self.surface.blit(text, (x_screen - text.get_width() - 6, y_screen - text.get_height() // 2))
 
     def render_depot(self, pulse: bool = True):
         """
@@ -179,10 +176,8 @@ class MapRenderer:
             0
         )
 
-        # Label
-        font = pygame.font.Font(None, FontSizes.SMALL + 4)
-        text = font.render("DEPOT", True, Colors.TEXT_PRIMARY)
-        text_rect = text.get_rect(center=(depot_screen[0], depot_screen[1] + radius + 15))
+        text = render_text("DEPOT", FontSizes.SMALL, Colors.TEXT_PRIMARY, bold=True)
+        text_rect = text.get_rect(center=(depot_screen[0], depot_screen[1] + radius + 16))
         self.surface.blit(text, text_rect)
 
     def render_package(self, package: Package, status: str = "pending", hover: bool = False):
@@ -337,8 +332,7 @@ class MapRenderer:
         pygame.draw.rect(self.surface, Colors.BORDER_DARK, rect, 2, border_radius=2)
 
         # Vehicle ID label
-        font = pygame.font.Font(None, FontSizes.TINY + 6)
-        text = font.render(vehicle.id[-3:], True, Colors.TEXT_PRIMARY)  # Last 3 chars of ID
+        text = render_text(vehicle.id[-3:], FontSizes.SMALL, Colors.TEXT_PRIMARY)
         text_rect = text.get_rect(center=(pos_screen[0], pos_screen[1] + rect_height + 8))
         self.surface.blit(text, text_rect)
 
@@ -356,56 +350,41 @@ class MapRenderer:
         pygame.draw.rect(self.surface, Colors.BORDER_LIGHT, legend_rect, 2, border_radius=5)
 
         # Title
-        font_title = pygame.font.Font(None, FontSizes.BODY + 2)
-        title = font_title.render("MAP LEGEND", True, Colors.TEXT_ACCENT)
-        self.surface.blit(title, (legend_x + 10, legend_y + 8))
+        title = render_text("MAP LEGEND", FontSizes.SUBHEADING, Colors.TEXT_ACCENT, bold=True)
+        self.surface.blit(title, (legend_x + 12, legend_y + 10))
 
-        # Legend items
-        font_small = pygame.font.Font(None, FontSizes.SMALL)
         y_offset = 30
 
-        # Depot
+        def _legend_text(label: str, y: float):
+            txt = render_text(label, FontSizes.SMALL, Colors.TEXT_PRIMARY)
+            self.surface.blit(txt, (legend_x + 30, legend_y + y - 6))
+
         pygame.draw.circle(self.surface, Colors.DEPOT, (legend_x + 15, legend_y + y_offset), 8)
-        text = font_small.render("Depot (Home Base)", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        _legend_text("Depot (home base)", y_offset)
         y_offset += 22
 
-        # Pending packages
         pygame.draw.circle(self.surface, Colors.PACKAGE_PENDING, (legend_x + 15, legend_y + y_offset), 6)
-        text = font_small.render("Package (Pending)", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        _legend_text("Package (pending)", y_offset)
         y_offset += 20
 
-        # Delivered packages
         pygame.draw.circle(self.surface, Colors.PACKAGE_DELIVERED, (legend_x + 15, legend_y + y_offset), 6)
-        text = font_small.render("Package (Delivered)", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        _legend_text("Package (delivered)", y_offset)
         y_offset += 20
 
-        # High priority
         pygame.draw.circle(self.surface, Colors.PACKAGE_PRIORITY_HIGH, (legend_x + 15, legend_y + y_offset), 6)
-        text = font_small.render("High Priority (3+)", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        _legend_text("High priority", y_offset)
         y_offset += 22
 
-        # Route line
-        pygame.draw.line(self.surface, Colors.ROUTE_COLORS[0],
-                        (legend_x + 10, legend_y + y_offset),
-                        (legend_x + 20, legend_y + y_offset), 3)
-        text = font_small.render("Delivery Route", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        pygame.draw.line(self.surface, Colors.ROUTE_COLORS[0], (legend_x + 10, legend_y + y_offset), (legend_x + 20, legend_y + y_offset), 3)
+        _legend_text("Delivery route", y_offset)
         y_offset += 22
 
-        # Vehicle
         veh_rect = pygame.Rect(legend_x + 11, legend_y + y_offset - 4, 10, 8)
         pygame.draw.rect(self.surface, Colors.VEHICLE_ACTIVE, veh_rect, border_radius=1)
-        text = font_small.render("Vehicle", True, Colors.TEXT_PRIMARY)
-        self.surface.blit(text, (legend_x + 30, legend_y + y_offset - 6))
+        _legend_text("Vehicle", y_offset)
 
-        # Hover hint
-        hint_font = pygame.font.Font(None, FontSizes.TINY + 6)
-        hint = hint_font.render("💡 Hover for details!", True, Colors.TEXT_ACCENT)
-        self.surface.blit(hint, (legend_x + 15, legend_y + legend_height - 18))
+        hint = render_text("Tip: hover for details", FontSizes.SMALL, Colors.TEXT_ACCENT)
+        self.surface.blit(hint, (legend_x + 12, legend_y + legend_height - 22))
 
     def get_package_at_mouse(self, mouse_pos: Tuple[int, int], packages: List[Package]) -> Optional[Package]:
         """

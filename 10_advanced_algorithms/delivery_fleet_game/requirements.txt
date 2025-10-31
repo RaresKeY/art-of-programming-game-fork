@@ -7,6 +7,7 @@
 
 # Phase 3 - GUI version (ACTIVE)
 pygame>=2.5.0  # For graphical interface and visualization
+pillow
 
 # Development dependencies (optional)
 # pytest>=7.4.0  # For unit testing
