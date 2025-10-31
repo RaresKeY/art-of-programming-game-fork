@@ -121,6 +121,58 @@ class Panel:
             surface.blit(text, text_rect)
 
 
+class CollapsiblePanel(Panel):
+    """
+    Panel with clickable header that can collapse/expand its content area.
+    """
+
+    def __init__(self, x: int, y: int, width: int, height: int,
+                 title: str = "", collapsed: bool = False):
+        super().__init__(x, y, width, height, title)
+        self.full_height = height
+        self.collapsed = collapsed
+        self.header_height = 42
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        """Toggle collapsed state when header is clicked."""
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            header_rect = pygame.Rect(self.rect.x, self.rect.y,
+                                      self.rect.width, self.header_height)
+            if header_rect.collidepoint(event.pos):
+                self.collapsed = not self.collapsed
+                return True
+        return False
+
+    def render(self, surface: pygame.Surface):
+        height = self.header_height if self.collapsed else self.full_height
+        panel_rect = pygame.Rect(self.rect.x, self.rect.y, self.rect.width, height)
+
+        pygame.draw.rect(surface, Colors.PANEL_BG, panel_rect, border_radius=8)
+        pygame.draw.rect(surface, Colors.BORDER_LIGHT, panel_rect, 2, border_radius=8)
+
+        if self.title:
+            font = pygame.font.SysFont('arial', FontSizes.HEADING - 2, bold=True)
+            text = font.render(self.title, True, Colors.TEXT_ACCENT)
+            text_rect = text.get_rect(midleft=(self.rect.x + 20, self.rect.y + self.header_height // 2))
+            surface.blit(text, text_rect)
+
+        # Draw toggle indicator (triangle)
+        arrow_x = self.rect.x + self.rect.width - 30
+        arrow_y = self.rect.y + self.header_height // 2
+        if self.collapsed:
+            points = [
+                (arrow_x - 8, arrow_y - 4),
+                (arrow_x + 8, arrow_y - 4),
+                (arrow_x, arrow_y + 6),
+            ]
+        else:
+            points = [
+                (arrow_x - 8, arrow_y + 4),
+                (arrow_x + 8, arrow_y + 4),
+                (arrow_x, arrow_y - 6),
+            ]
+        pygame.draw.polygon(surface, Colors.TEXT_ACCENT, points)
+
 class TextDisplay:
     """
     Static text display component.
@@ -282,6 +334,12 @@ class RadioButton:
                 return True
 
         return False
+
+    def set_position(self, x: int, y: int):
+        """Update position and hit area."""
+        self.x = x
+        self.y = y
+        self._update_hit_rect()
 
     def render(self, surface: pygame.Surface):
         """Render radio button."""
