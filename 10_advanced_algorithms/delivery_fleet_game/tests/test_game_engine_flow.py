@@ -10,16 +10,15 @@ def greedy_agent(game_engine):
     return agent
 
 
-def test_start_day_loads_packages(game_engine, data_loader):
-    expected_packages = data_loader.load_packages("packages_day1.json")
-
+def test_start_day_loads_packages(game_engine):
     game_engine.start_day()
 
     assert game_engine.game_state is not None
-    assert len(game_engine.game_state.packages_pending) == len(expected_packages)
-    # Packages should retain their identifiers.
-    pending_ids = {pkg.id for pkg in game_engine.game_state.packages_pending}
-    assert pending_ids == {pkg.id for pkg in expected_packages}
+    assert len(game_engine.game_state.packages_pending) > 0
+    snapshot = game_engine.current_difficulty
+    assert snapshot is not None
+    assert game_engine.game_state.current_demand_tier == snapshot.demand_tier
+    assert snapshot.popularity == game_engine.game_state.popularity_score
 
 
 def test_execute_day_with_greedy_agent(game_engine, data_loader, greedy_agent):
@@ -46,6 +45,9 @@ def test_execute_day_with_greedy_agent(game_engine, data_loader, greedy_agent):
     assert last_day.packages_delivered <= pending_before
     assert game_engine.game_state.balance == pytest.approx(last_day.balance_end)
     assert profit == last_day.profit
+    assert last_day.popularity_end == game_engine.game_state.popularity_score
+    assert last_day.demand_tier == game_engine.game_state.current_demand_tier.value
+    assert isinstance(last_day.popularity_delta, int)
 
     # Moving to next day should increment counter and clear routes.
     current_day = game_engine.game_state.current_day

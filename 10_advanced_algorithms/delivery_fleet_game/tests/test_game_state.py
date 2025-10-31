@@ -56,3 +56,6 @@ def test_execute_routes_records_history(simple_map, sample_vehicle_type, sample_
     assert record.packages_delivered == 2
     assert record.profit == pytest.approx(profit)
     assert state.balance == pytest.approx(10_000 + profit)
+    assert record.popularity_end == state.popularity_score
+    assert record.demand_tier == state.current_demand_tier.value
+    assert isinstance(record.popularity_delta, int)
