@@ -21,7 +21,9 @@ from src.agents import GreedyAgent, BacktrackingAgent, PruningBacktrackingAgent,
 from src.ui.constants import *
 from src.ui.map_renderer import MapRenderer
 from src.ui.components import Button, Panel, StatDisplay, RadioButton, Tooltip
+from src.ui.font_utils import render_text
 from src.ui.manual_mode import ManualModeManager
+from src.utils.metrics import calculate_route_metrics
 
 
 class Modal:
@@ -167,6 +169,7 @@ class DeliveryFleetApp:
         # Manual mode state
         self.mode = "AUTO"  # "AUTO" or "MANUAL"
         self.manual_mode_manager = None  # Will be created when needed
+        self.disabled_agents = {"backtracking"}
 
         # Modals
         self.vehicle_modal = Modal("Purchase Vehicle", 650, 650)  # Larger for detailed specs
@@ -175,19 +178,28 @@ class DeliveryFleetApp:
         self.day_summary_modal = Modal("📦 Day Summary", 700, 580)  # Increased height for button
         self.comparison_modal = Modal("🎯 Manual vs Algorithm Comparison", 750, 600)
 
+        # Autoplay state defaults (used during UI creation)
+        self.autoplay_enabled = False
+        self.autoplay_speed = 1
+        self.autoplay_timer = 0.0
+        self.autoplay_action: Optional[str] = None
+        self.speed_button_keys = ['speed1', 'speed2', 'speed3']
+
         # Create UI
         self._create_ui_components()
 
         # Game state
         self.planned_routes = []
         self.package_status = {}
+        self.agent_metrics_preview = {}
 
         # Start new game
         self.engine.new_game()
         self.update_stats()
+        self.start_day_flow()
 
         print("✓ Delivery Fleet Manager Ready!")
-        print("✓ Click 'Start Day' to begin")
+        print("✓ Day initialized. Agents ready for planning")
 
     def _register_agents(self):
         """Register all routing agents."""
@@ -257,43 +269,283 @@ class DeliveryFleetApp:
         ]
         self.agent_radios[0].selected = True
 
+        for radio in self.agent_radios:
+            if radio.value in self.disabled_agents:
+                radio.set_enabled(False)
+                radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
+
+        self._ensure_valid_agent_selection()
+
         # Control buttons - positioned in CONTROLS panel
         btn_x = SIDEBAR_X + 25
         btn_y = SIDEBAR_START + 585  # Adjusted for new panel position
         btn_width = SIDEBAR_WIDTH - 50
         btn_small_width = (btn_width - 10) // 2
         btn_height = 35
-        btn_spacing = 38  # Comfortable spacing
+        btn_spacing = 38
+        speed_btn_width = (btn_width - 20) // 3
 
         self.buttons = {
-            'start_day': Button(btn_x, btn_y, btn_width, btn_height, "📦 Start Day", self.on_start_day),
-            'buy_vehicle': Button(btn_x, btn_y + btn_spacing, btn_width, btn_height, "🚚 Buy Vehicle", self.on_buy_vehicle),
-            'plan_routes': Button(btn_x, btn_y + btn_spacing * 2, btn_small_width, btn_height, "🧠 Plan", self.on_plan_routes),
-            'clear': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing * 2, btn_small_width, btn_height, "🔄 Clear", self.on_clear_routes),
-            'execute': Button(btn_x, btn_y + btn_spacing * 3, btn_small_width, btn_height, "▶️ Execute", self.on_execute_day),
-            'next_day': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing * 3, btn_small_width, btn_height, "⏭️ Next", self.on_next_day),
-            'marketing': Button(btn_x, btn_y + btn_spacing * 4, btn_width, btn_height, "📈 Marketing", self.on_show_marketing),
-            'compare': Button(btn_x, btn_y + btn_spacing * 5, btn_width, btn_height, "🎯 Compare", self.on_show_comparison),
-            'save': Button(btn_x, btn_y + btn_spacing * 6, btn_small_width, btn_height, "💾 Save", self.on_save),
-            'load': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing * 6, btn_small_width, btn_height, "📂 Load", self.on_load),
+            'buy_vehicle': Button(btn_x, btn_y, btn_width, btn_height, "Buy Vehicle", self.on_buy_vehicle),
+            'execute': Button(btn_x, btn_y + btn_spacing, btn_small_width, btn_height, "Execute", self.on_execute_day),
+            'next_day': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing, btn_small_width, btn_height, "Next", self.on_next_day),
+            'autoplay': Button(btn_x, btn_y + btn_spacing * 2, btn_width, btn_height, "Auto Play", self.toggle_autoplay),
+            'speed1': Button(btn_x, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "1x", lambda: self.set_autoplay_speed(1)),
+            'speed2': Button(btn_x + speed_btn_width + 10, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "2x", lambda: self.set_autoplay_speed(2)),
+            'speed3': Button(btn_x + (speed_btn_width + 10) * 2, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "3x", lambda: self.set_autoplay_speed(3)),
+            'marketing': Button(btn_x, btn_y + btn_spacing * 4, btn_width, btn_height, "Marketing", self.on_show_marketing),
         }
 
         # Set initial states
-        self.buttons['plan_routes'].enabled = False
-        self.buttons['clear'].enabled = False
         self.buttons['execute'].enabled = False
         self.buttons['next_day'].enabled = False
-        self.buttons['compare'].enabled = False  # Only enabled in manual mode with routes
+        self._refresh_speed_buttons()
 
     # ==================== EVENT HANDLERS ====================
+
+    def _ensure_valid_agent_selection(self):
+        """Select the first available agent if current selection is disabled."""
+        if any(r.value == self.selected_agent and r.enabled for r in self.agent_radios):
+            return
+
+        for radio in self.agent_radios:
+            radio.selected = False
+
+        for radio in self.agent_radios:
+            if radio.enabled:
+                radio.selected = True
+                self.selected_agent = radio.value
+                break
+
+    def _refresh_speed_buttons(self):
+        """Update autoplay speed button labels to indicate active selection."""
+        labels = {1: "1x", 2: "2x", 3: "3x"}
+        for idx, key in enumerate(self.speed_button_keys, start=1):
+            button = self.buttons.get(key)
+            if not button:
+                continue
+            if self.autoplay_speed == idx:
+                button.text = f"[{labels[idx]}]"
+            else:
+                button.text = labels[idx]
+
+    def start_day_flow(self):
+        """Begin a new day, auto-plan routes when capacity allows."""
+        print("\n[UI] Starting day...")
+        self.engine.start_day()
+
+        if not self.engine.game_state.packages_pending:
+            self.show_warning("No packages for this day!", Colors.TEXT_ACCENT)
+            return
+
+        self.package_status = {pkg.id: "pending" for pkg in self.engine.game_state.packages_pending}
+
+        total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
+        fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
+
+        if fleet_capacity <= 0 or total_volume > fleet_capacity:
+            self.show_day_summary(total_volume, fleet_capacity)
+        else:
+            if self.mode == "AUTO":
+                self.auto_plan_routes(show_feedback=True)
+            else:
+                self.show_warning("Manual mode: build routes then execute.", Colors.TEXT_ACCENT)
+
+        self.update_agent_previews()
+        self.update_stats()
+        if self.mode == "MANUAL":
+            self.buttons['execute'].enabled = True
+        else:
+            self.buttons['execute'].enabled = bool(self.planned_routes)
+
+    def _simulate_agent_metrics(self, agent_name: str) -> Optional[dict]:
+        """Run agent planning without mutating game state to collect metrics."""
+        if agent_name not in self.engine.agents:
+            return None
+
+        state = self.engine.game_state
+        if not state or not state.packages_pending:
+            return None
+
+        agent = self.engine.agents[agent_name]
+        packages = state.packages_pending.copy()
+        fleet = state.get_available_fleet()
+        routes = agent.plan_routes(packages, fleet)
+        if not routes:
+            return None
+
+        metrics = calculate_route_metrics(routes)
+        metrics['routes'] = routes
+        metrics['agent_name'] = agent_name
+        return metrics
+
+    def update_agent_previews(self, metrics_override: Optional[dict] = None) -> None:
+        """Update agent radio labels with projected profit values."""
+        state = self.engine.game_state
+        if not state or not state.packages_pending:
+            for radio in self.agent_radios:
+                if radio.value in self.disabled_agents:
+                    radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
+                else:
+                    radio.set_extra("", Colors.TEXT_SECONDARY)
+            return
+
+        previews = {}
+        if metrics_override and metrics_override.get('agent_name'):
+            previews[metrics_override['agent_name']] = metrics_override
+
+        for radio in self.agent_radios:
+            if radio.value in self.disabled_agents or radio.value in previews:
+                continue
+            metrics = self._simulate_agent_metrics(radio.value)
+            if metrics:
+                previews[radio.value] = metrics
+
+        self.agent_metrics_preview = previews
+
+        for radio in self.agent_radios:
+            if radio.value in self.disabled_agents:
+                radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
+                continue
+            metrics = previews.get(radio.value)
+            if metrics and metrics.get('total_profit') is not None:
+                profit = metrics['total_profit']
+                color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
+                sign = "+" if profit >= 0 else "-"
+                radio.set_extra(f"{sign}${abs(profit):,.0f}", color)
+            else:
+                radio.set_extra("", Colors.TEXT_SECONDARY)
+
+        self._ensure_valid_agent_selection()
+
+    def auto_plan_routes(self, show_feedback: bool = True):
+        """Plan routes using the selected agent in AUTO mode."""
+        if not self.engine.game_state or not self.engine.game_state.packages_pending:
+            if show_feedback:
+                self.show_warning("No packages available to plan!", Colors.TEXT_ACCENT)
+            return
+
+        if self.mode == "MANUAL":
+            if show_feedback:
+                self.show_warning("Switch to AUTO mode to plan automatically.", Colors.TEXT_ACCENT)
+            return
+
+        agent_name = self.selected_agent
+        if agent_name in self.disabled_agents:
+            self.show_warning("Selected agent is unavailable.", Colors.TEXT_ACCENT)
+            return
+
+        metrics = self._simulate_agent_metrics(agent_name)
+        if metrics and metrics.get('routes'):
+            self.planned_routes = metrics['routes']
+            self.planned_metrics = metrics
+            self.engine.apply_agent_solution(agent_name)
+            self.buttons['execute'].enabled = True
+
+            profit = metrics['total_profit']
+            color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
+            self.show_warning(f"Routes planned! Profit: ${profit:.2f}", color if show_feedback else Colors.TEXT_ACCENT)
+            self.update_agent_previews(metrics_override=metrics)
+        else:
+            self.planned_routes = []
+            self.planned_metrics = None
+            self.engine.game_state.set_routes([])
+            self.buttons['execute'].enabled = False
+            if show_feedback:
+                self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
+
+    def toggle_autoplay(self):
+        """Toggle automatic day progression."""
+        if not self.autoplay_enabled:
+            if self.mode != "AUTO":
+                self.on_mode_auto()
+            self.autoplay_enabled = True
+            self.autoplay_timer = 0.0
+            self.autoplay_action = None
+            self.buttons['autoplay'].text = "Stop Auto"
+            self.show_warning("Autoplay started.", Colors.TEXT_ACCENT)
+        else:
+            self.stop_autoplay("Autoplay stopped.")
+
+    def stop_autoplay(self, message: Optional[str] = None, color=Colors.TEXT_ACCENT):
+        if not self.autoplay_enabled and not message:
+            return
+        self.autoplay_enabled = False
+        self.autoplay_action = None
+        self.autoplay_timer = 0.0
+        self.buttons['autoplay'].text = "Auto Play"
+        if message:
+            self.show_warning(message, color)
+
+    def set_autoplay_speed(self, speed: int):
+        speed = max(1, min(3, speed))
+        if self.autoplay_speed == speed:
+            return
+        self.autoplay_speed = speed
+        self._refresh_speed_buttons()
+        if self.autoplay_enabled:
+            self.show_warning(f"Autoplay speed set to {speed}x", Colors.TEXT_ACCENT)
+
+    def _get_autoplay_delay(self) -> float:
+        return {1: 1.2, 2: 0.7, 3: 0.4}.get(self.autoplay_speed, 1.0)
+
+    def _determine_autoplay_action(self) -> Optional[str]:
+        if not self.engine.game_state:
+            return None
+        if self.day_summary_modal.visible or self.capacity_warning_modal.visible or self.vehicle_modal.visible:
+            return None
+        if self.buttons['next_day'].enabled:
+            return "next_day"
+        if not self.planned_routes:
+            return "plan"
+        return "execute"
+
+    def _execute_autoplay_action(self, action: str):
+        if action == "plan":
+            before = len(self.planned_routes)
+            self.auto_plan_routes(show_feedback=False)
+            if not self.planned_routes or len(self.planned_routes) == before:
+                self.stop_autoplay("Autoplay halted: unable to plan routes.", Colors.PROFIT_NEGATIVE)
+        elif action == "execute":
+            if self.planned_routes:
+                self.on_execute_day()
+            else:
+                self.stop_autoplay("Autoplay halted: no planned routes.", Colors.PROFIT_NEGATIVE)
+        elif action == "next_day":
+            if self.buttons['next_day'].enabled:
+                self.on_next_day()
+            else:
+                self.stop_autoplay("Autoplay halted: cannot advance day.", Colors.PROFIT_NEGATIVE)
+
+    def process_autoplay(self, dt: float):
+        if not self.autoplay_enabled:
+            return
+        if self.day_summary_modal.visible or self.capacity_warning_modal.visible or self.vehicle_modal.visible:
+            return
+
+        action = self.autoplay_action or self._determine_autoplay_action()
+        if not action:
+            return
+
+        if not self.autoplay_action:
+            self.autoplay_action = action
+            self.autoplay_timer = self._get_autoplay_delay()
+            return
+
+        self.autoplay_timer -= dt
+        if self.autoplay_timer <= 0:
+            action_to_run = self.autoplay_action
+            self.autoplay_action = None
+            self._execute_autoplay_action(action_to_run)
 
     def on_mode_auto(self):
         """Switch to AUTO mode."""
         self.mode = "AUTO"
-        self.show_warning("AUTO mode: Use algorithms to plan routes", Colors.TEXT_ACCENT)
+        self.show_warning("AUTO mode: algorithms will plan routes", Colors.TEXT_ACCENT)
         if self.manual_mode_manager:
             self.manual_mode_manager.active = False
-        self.buttons['compare'].enabled = False
+        if self.engine.game_state and self.engine.game_state.packages_pending:
+            self.auto_plan_routes(show_feedback=False)
 
     def on_mode_manual(self):
         """Switch to MANUAL mode."""
@@ -320,108 +572,28 @@ class DeliveryFleetApp:
                 self.engine.game_state.fleet
             )
             self.manual_mode_manager.active = True
-
-    def on_start_day(self):
-        """Start a new day."""
-        print("\n[UI] Starting day...")
-        self.engine.start_day()
-
-        if not self.engine.game_state.packages_pending:
-            self.show_warning("No packages for this day!", Colors.TEXT_ACCENT)
-            return
-
-        self.package_status = {pkg.id: "pending" for pkg in self.engine.game_state.packages_pending}
-
-        # Check capacity
-        total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
-        fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
-
-        # Show day summary
-        self.show_day_summary(total_volume, fleet_capacity)
-
-        if total_volume > fleet_capacity:
-            # Will show capacity warning after closing day summary
-            pass
-        else:
-            self.buttons['plan_routes'].enabled = True
-            self.show_warning("", Colors.TEXT_PRIMARY)
-
-        self.update_stats()
+            self.buttons['execute'].enabled = True
 
     def show_day_summary(self, total_volume: float, fleet_capacity: float):
-        """Show day start summary with package and fleet information."""
+        """Show summary only when capacity is insufficient."""
         state = self.engine.game_state
-        packages = state.packages_pending
-
-        # Count package types
-        small_pkgs = sum(1 for p in packages if p.volume_m3 < 2.5)
-        medium_pkgs = sum(1 for p in packages if 2.5 <= p.volume_m3 < 4.0)
-        large_pkgs = sum(1 for p in packages if p.volume_m3 >= 4.0)
-        priority_pkgs = sum(1 for p in packages if p.priority >= 3)
-
-        # Calculate potential revenue
-        potential_revenue = sum(p.payment for p in packages)
-
-        # Fleet breakdown
-        fleet_by_type = {}
-        for v in state.fleet:
-            vtype = v.vehicle_type.name
-            if vtype not in fleet_by_type:
-                fleet_by_type[vtype] = 0
-            fleet_by_type[vtype] += 1
-
-        # Capacity status
-        capacity_pct = (total_volume / fleet_capacity * 100) if fleet_capacity > 0 else 0
-        capacity_color = Colors.PROFIT_POSITIVE if capacity_pct <= 100 else Colors.PROFIT_NEGATIVE
-
+        shortage = max(0.0, total_volume - fleet_capacity)
         content = [
-            (f"═══ DAY {state.current_day} START ═══", Colors.TEXT_ACCENT),
+            (f"Day {state.current_day}: capacity warning", Colors.TEXT_ACCENT),
             ("", Colors.TEXT_PRIMARY),
-            ("📦 PACKAGES TO DELIVER", Colors.TEXT_ACCENT),
-            (f"   Total: {len(packages)} packages ({total_volume:.1f}m³)", Colors.TEXT_PRIMARY),
-            (f"   Small: {small_pkgs} | Medium: {medium_pkgs} | Large: {large_pkgs}", Colors.TEXT_SECONDARY),
-            (f"   High Priority: {priority_pkgs}", Colors.TEXT_SECONDARY),
-            (f"   Potential Revenue: ${potential_revenue:.0f}", Colors.PROFIT_POSITIVE),
+            (f"Packages volume: {total_volume:.1f} m³", Colors.TEXT_PRIMARY),
+            (f"Fleet capacity: {fleet_capacity:.1f} m³", Colors.TEXT_PRIMARY),
+            (f"Shortage: {shortage:.1f} m³", Colors.PROFIT_NEGATIVE),
             ("", Colors.TEXT_PRIMARY),
-            ("🚚 FLEET STATUS", Colors.TEXT_ACCENT),
-            (f"   Total Capacity: {fleet_capacity:.1f}m³", Colors.TEXT_PRIMARY),
+            ("Add more vehicles or continue and risk undelivered packages.", Colors.TEXT_SECONDARY),
         ]
 
-        # Add fleet breakdown
-        for vtype, count in fleet_by_type.items():
-            content.append((f"   {vtype}: {count}x", Colors.TEXT_SECONDARY))
-
-        content.extend([
-            ("", Colors.TEXT_PRIMARY),
-            (f"📊 CAPACITY USAGE: {capacity_pct:.0f}%", capacity_color),
-            ("", Colors.TEXT_PRIMARY),
-            ("💡 Hover over packages on map for details!", Colors.TEXT_ACCENT),
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-            ("", Colors.TEXT_PRIMARY),  # Extra spacing before buttons
-
-        ])
-
-        # Create buttons - positioned at bottom with proper spacing
         modal_btn_x = self.day_summary_modal.x + 120
-        modal_btn_y = self.day_summary_modal.y + 520  # Positioned for 580px height modal
-
-        if total_volume > fleet_capacity:
-            # Need more capacity
-            buttons = [
-                Button(modal_btn_x, modal_btn_y, 250, 40, "⚠️ Buy Vehicle (Shortage!)",
-                       lambda: self.close_day_summary_and_buy(total_volume, fleet_capacity)),
-                Button(modal_btn_x + 260, modal_btn_y, 150, 40, "Continue",
-                       lambda: self.close_day_summary_with_warning(total_volume, fleet_capacity)),
-            ]
-        else:
-            buttons = [
-                Button(modal_btn_x + 120, modal_btn_y, 250, 40, "Start Planning Routes ✓",
-                       lambda: self.day_summary_modal.hide()),
-            ]
+        modal_btn_y = self.day_summary_modal.y + 480
+        buttons = [
+            Button(modal_btn_x, modal_btn_y, 220, 40, "Buy Vehicles", lambda: self.close_day_summary_and_buy(total_volume, fleet_capacity)),
+            Button(modal_btn_x + 240, modal_btn_y, 180, 40, "Continue", lambda: self.close_day_summary_with_warning(total_volume, fleet_capacity)),
+        ]
 
         self.day_summary_modal.show(content, buttons)
 
@@ -449,7 +621,7 @@ class DeliveryFleetApp:
                     break
 
         content = [
-            ("⚠️ CAPACITY PROBLEM", Colors.PROFIT_NEGATIVE),
+            ("CAPACITY PROBLEM", Colors.PROFIT_NEGATIVE),
             ("", Colors.TEXT_PRIMARY),
             (f"Total packages: {needed:.1f}m³", Colors.TEXT_PRIMARY),
             (f"Fleet capacity: {available:.1f}m³", Colors.TEXT_PRIMARY),
@@ -548,97 +720,30 @@ class DeliveryFleetApp:
             self.show_warning(f"Purchased {vehicle_type.name}!", Colors.PROFIT_POSITIVE)
             self.update_stats()
             self.vehicle_modal.hide()
-
-            # Re-check if we can now plan routes
-            if self.engine.game_state.packages_pending:
-                total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
-                fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
-                if total_volume <= fleet_capacity:
-                    self.buttons['plan_routes'].enabled = True
+            self.update_agent_previews()
+            if self.mode == "AUTO":
+                self.auto_plan_routes(show_feedback=False)
         else:
             self.show_warning("Not enough funds!", Colors.PROFIT_NEGATIVE)
 
-    def on_plan_routes(self):
-        """Plan routes with selected agent or apply manual routes."""
+    def on_execute_day(self):
+        """Execute the planned routes or manual plan."""
         if self.mode == "MANUAL":
-            # Apply manual routes
             if not self.manual_mode_manager:
                 self.show_warning("Manual mode not initialized!", Colors.PROFIT_NEGATIVE)
                 return
-
             manual_routes = self.manual_mode_manager.get_manual_routes(self.engine.delivery_map)
             if not manual_routes:
                 self.show_warning("No routes built! Assign packages and select stops.", Colors.PROFIT_NEGATIVE)
                 return
-
-            # Apply manual routes to game state
             self.engine.game_state.set_routes(manual_routes)
             self.planned_routes = manual_routes
-
-            # Calculate metrics
-            from src.utils.metrics import calculate_route_metrics
-            metrics = calculate_route_metrics(manual_routes)
-            self.planned_metrics = metrics
-
-            # Update display
-            cost = metrics['total_cost']
-            revenue = metrics['total_revenue']
-            profit = metrics['total_profit']
-
-            profit_color = Colors.PROFIT_POSITIVE if profit > 0 else Colors.PROFIT_NEGATIVE
-            self.planned_cost_stat.set_value(f"${cost:.0f}", Colors.PROFIT_NEGATIVE)
-            self.planned_revenue_stat.set_value(f"${revenue:.0f}", Colors.PROFIT_POSITIVE)
-            self.planned_profit_stat.set_value(f"${profit:.0f}", profit_color)
-
-            self.buttons['execute'].enabled = True
-            self.buttons['clear'].enabled = True
-            self.buttons['compare'].enabled = True
-            self.show_warning(f"Manual routes ready! Profit: ${profit:.2f}", Colors.PROFIT_POSITIVE)
-            return
-
-        # AUTO mode - use agent
-        print(f"\n[UI] Planning with {self.selected_agent}...")
-        metrics = self.engine.test_agent(self.selected_agent)
-
-        if metrics and metrics.get('routes'):
-            self.planned_routes = metrics['routes']
-            self.planned_metrics = metrics
-            self.engine.apply_agent_solution(self.selected_agent)
-            self.buttons['execute'].enabled = True
-            self.buttons['clear'].enabled = True
-
-            # Update planned metrics display
-            cost = metrics['total_cost']
-            revenue = metrics['total_revenue']
-            profit = metrics['total_profit']
-
-            profit_color = Colors.PROFIT_POSITIVE if profit > 0 else Colors.PROFIT_NEGATIVE
-            self.planned_cost_stat.set_value(f"${cost:.0f}", Colors.PROFIT_NEGATIVE)
-            self.planned_revenue_stat.set_value(f"${revenue:.0f}", Colors.PROFIT_POSITIVE)
-            self.planned_profit_stat.set_value(f"${profit:.0f}", profit_color)
-
-            self.show_warning(f"Routes planned! Profit: ${profit:.2f}", Colors.PROFIT_POSITIVE)
         else:
-            self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
+            if not self.planned_routes:
+                self.auto_plan_routes(show_feedback=True)
+                if not self.planned_routes:
+                    return
 
-    def on_clear_routes(self):
-        """Clear planned routes and reset UI."""
-        print("\n[UI] Clearing routes...")
-        self.planned_routes = []
-        self.planned_metrics = None
-        self.engine.game_state.set_routes([])
-        self.buttons['execute'].enabled = False
-        self.buttons['clear'].enabled = False
-
-        # Clear planned metrics display
-        self.planned_cost_stat.set_value("$0", Colors.TEXT_SECONDARY)
-        self.planned_revenue_stat.set_value("$0", Colors.TEXT_SECONDARY)
-        self.planned_profit_stat.set_value("$0", Colors.TEXT_SECONDARY)
-
-        self.show_warning("Routes cleared", Colors.TEXT_ACCENT)
-
-    def on_execute_day(self):
-        """Execute the planned routes."""
         print("\n[UI] Executing day...")
         self.engine.execute_day(self.selected_agent)
 
@@ -646,36 +751,35 @@ class DeliveryFleetApp:
             if pkg.id in self.package_status:
                 self.package_status[pkg.id] = "delivered"
 
-        self.buttons['next_day'].enabled = True
-        self.buttons['execute'].enabled = False
-        self.buttons['clear'].enabled = False
-        self.buttons['plan_routes'].enabled = False
-
-        # Clear planned metrics display
+        self.planned_routes = []
         self.planned_metrics = None
+        self.engine.game_state.set_routes([])
+
+        self.buttons['execute'].enabled = False
+        self.buttons['next_day'].enabled = True
         self.planned_cost_stat.set_value("$0", Colors.TEXT_SECONDARY)
         self.planned_revenue_stat.set_value("$0", Colors.TEXT_SECONDARY)
         self.planned_profit_stat.set_value("$0", Colors.TEXT_SECONDARY)
+        self.autoplay_action = None
 
-        # Show result
         last_day = self.engine.game_state.get_last_day_summary()
         if last_day:
-            msg = f"Day complete! Profit: ${last_day.profit:+.2f}"
-            color = Colors.PROFIT_POSITIVE if last_day.profit > 0 else Colors.PROFIT_NEGATIVE
-            self.show_warning(msg, color)
+            color = Colors.PROFIT_POSITIVE if last_day.profit >= 0 else Colors.PROFIT_NEGATIVE
+            self.show_warning(f"Day complete! Profit: ${last_day.profit:+.2f}", color)
 
         self.update_stats()
+        self.update_agent_previews()
 
     def on_next_day(self):
         """Advance to next day."""
         self.engine.advance_to_next_day()
         self.planned_routes = []
+        self.planned_metrics = None
         self.package_status = {}
-        self.buttons['plan_routes'].enabled = False
         self.buttons['execute'].enabled = False
         self.buttons['next_day'].enabled = False
-        self.show_warning("", Colors.TEXT_PRIMARY)
-        self.update_stats()
+        self.autoplay_action = None
+        self.start_day_flow()
 
     def on_save(self):
         """Save game."""
@@ -695,14 +799,11 @@ class DeliveryFleetApp:
             self.planned_revenue_stat.set_value("$0", Colors.TEXT_SECONDARY)
             self.planned_profit_stat.set_value("$0", Colors.TEXT_SECONDARY)
 
-            # Reset button states
-            self.buttons['plan_routes'].enabled = False
-            self.buttons['clear'].enabled = False
-            self.buttons['execute'].enabled = False
-            self.buttons['next_day'].enabled = False
-
             # Update stats
             self.update_stats()
+            self.buttons['execute'].enabled = False
+            self.buttons['next_day'].enabled = False
+            self.start_day_flow()
             self.show_warning("Game loaded successfully!", Colors.PROFIT_POSITIVE)
             print(f"✓ Loaded game: Day {self.engine.game_state.current_day}, Balance ${self.engine.game_state.balance:.2f}")
         except FileNotFoundError:
@@ -729,7 +830,7 @@ class DeliveryFleetApp:
         marketing_info = self.engine.game_state.get_marketing_info()
 
         content = [
-            ("📈 MARKETING & PACKAGE RATE", Colors.TEXT_ACCENT),
+            ("MARKETING & PACKAGE RATE", Colors.TEXT_ACCENT),
             ("", Colors.TEXT_PRIMARY),
             (f"Current Level: {marketing_info['level']}/5", Colors.TEXT_PRIMARY),
             (f"Daily Package Volume: {marketing_info['current_volume']:.1f}m³", Colors.PROFIT_POSITIVE),
@@ -745,7 +846,7 @@ class DeliveryFleetApp:
                 (f"Next Level ({next_level}): {next_volume:.1f}m³/day", Colors.TEXT_SECONDARY),
                 (f"Upgrade Cost: ${upgrade_cost:,}", Colors.TEXT_SECONDARY),
                 ("", Colors.TEXT_PRIMARY),
-                ("💡 Higher marketing = More packages!", Colors.TEXT_ACCENT),
+                ("Higher marketing increases package volume", Colors.TEXT_ACCENT),
                 ("   Grow your fleet to handle increased volume", Colors.TEXT_SECONDARY),
             ])
         else:
@@ -943,8 +1044,14 @@ class DeliveryFleetApp:
             pkg = self.map_renderer.get_package_at_mouse(mouse_pos, self.engine.game_state.packages_pending)
             if pkg:
                 status = self.package_status.get(pkg.id, "pending")
-                status_text = "✓ DELIVERED" if status == "delivered" else "📦 PENDING"
-                tooltip_text = f"{status_text}\n{pkg.id}: {pkg.description or 'Package'}\nVolume: {pkg.volume_m3}m³\nPayment: ${pkg.payment}\nPriority: {pkg.priority}"
+                status_text = "DELIVERED" if status == "delivered" else "PENDING"
+                tooltip_text = (
+                    f"Status: {status_text}\n"
+                    f"ID: {pkg.id}\n"
+                    f"Volume: {pkg.volume_m3} m³\n"
+                    f"Payment: ${pkg.payment}\n"
+                    f"Priority: {pkg.priority}"
+                )
                 self.tooltip.show(tooltip_text, (mouse_pos[0] + 15, mouse_pos[1] + 15))
                 return
 
@@ -952,7 +1059,13 @@ class DeliveryFleetApp:
         if self.engine.game_state.fleet:
             veh = self.map_renderer.get_vehicle_at_mouse(mouse_pos, self.engine.game_state.fleet)
             if veh:
-                tooltip_text = f"🚚 {veh.vehicle_type.name}\n{veh.id}\nCapacity: {veh.vehicle_type.capacity_m3}m³\nCost: ${veh.vehicle_type.cost_per_km}/km\nRange: {veh.vehicle_type.max_range_km}km"
+                tooltip_text = (
+                    f"Vehicle: {veh.vehicle_type.name}\n"
+                    f"ID: {veh.id}\n"
+                    f"Capacity: {veh.vehicle_type.capacity_m3} m³\n"
+                    f"Cost: ${veh.vehicle_type.cost_per_km}/km\n"
+                    f"Range: {veh.vehicle_type.max_range_km} km"
+                )
                 self.tooltip.show(tooltip_text, (mouse_pos[0] + 15, mouse_pos[1] + 15))
                 return
 
@@ -1024,7 +1137,7 @@ class DeliveryFleetApp:
 
                 elif result['action'] == 'capacity_exceeded':
                     veh = result['data']
-                    self.show_warning(f"⚠️ {veh.id} capacity exceeded!", Colors.PROFIT_NEGATIVE)
+                    self.show_warning(f"Capacity exceeded for {veh.id}", Colors.PROFIT_NEGATIVE)
 
                 elif result['action'] == 'vehicle_selected':
                     if result['data']:
@@ -1064,6 +1177,8 @@ class DeliveryFleetApp:
                             if i != j:
                                 other.selected = False
                         self.selected_agent = radio.value
+                        if self.mode == "AUTO":
+                            self.auto_plan_routes(show_feedback=True)
 
             if event.type == pygame.MOUSEMOTION:
                 for radio in self.agent_radios:
@@ -1095,18 +1210,19 @@ class DeliveryFleetApp:
 
         pygame.display.flip()
 
+    def update(self, dt: float):
+        """Update per-frame systems."""
+        self.process_autoplay(dt)
+
     def render_title_bar(self):
         """Render title bar."""
         title_rect = pygame.Rect(0, 0, WINDOW_WIDTH, TITLE_BAR_HEIGHT)
         pygame.draw.rect(self.screen, Colors.TITLE_BG, title_rect)
 
-        # Use SysFont for better anti-aliasing
-        font_large = pygame.font.SysFont('arial', FontSizes.TITLE, bold=True)
-        title = font_large.render("DELIVERY FLEET MANAGER", True, Colors.TEXT_ACCENT)
+        title = render_text("DELIVERY FLEET MANAGER", FontSizes.TITLE, Colors.TEXT_ACCENT, bold=True)
         self.screen.blit(title, (20, 20))
 
-        font_small = pygame.font.SysFont('arial', FontSizes.SMALL)
-        subtitle = font_small.render("Art of Programming - Route Optimization", True, Colors.TEXT_SECONDARY)
+        subtitle = render_text("Art of Programming - Route Optimization", FontSizes.SMALL, Colors.TEXT_SECONDARY)
         self.screen.blit(subtitle, (20, 58))
 
         # Status - Improved rendering with panel background
@@ -1120,23 +1236,20 @@ class DeliveryFleetApp:
             pygame.draw.rect(self.screen, Colors.BORDER_LIGHT, status_panel, 2, border_radius=8)
 
             # Day label and value
-            font_label = pygame.font.SysFont('arial', 14)
-            font_value = pygame.font.SysFont('arial', 24, bold=True)
-
-            day_label = font_label.render("Day", True, Colors.TEXT_SECONDARY)
+            day_label = render_text("Day", FontSizes.SMALL, Colors.TEXT_SECONDARY)
             self.screen.blit(day_label, (status_x, status_y))
 
-            day_value = font_value.render(str(self.engine.game_state.current_day), True, Colors.TEXT_ACCENT)
+            day_value = render_text(str(self.engine.game_state.current_day), FontSizes.HEADING, Colors.TEXT_ACCENT, bold=True)
             self.screen.blit(day_value, (status_x, status_y + 18))
 
             # Balance label and value
             bal_x = status_x + 120
-            bal_label = font_label.render("Balance", True, Colors.TEXT_SECONDARY)
+            bal_label = render_text("Balance", FontSizes.SMALL, Colors.TEXT_SECONDARY)
             self.screen.blit(bal_label, (bal_x, status_y))
 
             bal_color = Colors.PROFIT_POSITIVE if self.engine.game_state.balance >= 0 else Colors.PROFIT_NEGATIVE
             bal_text = f"${self.engine.game_state.balance:,.0f}"
-            bal_value = font_value.render(bal_text, True, bal_color)
+            bal_value = render_text(bal_text, FontSizes.HEADING, bal_color, bold=True)
             self.screen.blit(bal_value, (bal_x, status_y + 18))
 
     def render_map(self):
@@ -1353,9 +1466,10 @@ class DeliveryFleetApp:
     def run(self):
         """Main game loop."""
         while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
             self.handle_events()
+            self.update(dt)
             self.render()
-            self.clock.tick(FPS)
 
         pygame.quit()
         print("\nThank you for playing!")

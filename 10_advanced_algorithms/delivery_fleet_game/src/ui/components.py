@@ -229,16 +229,38 @@ class RadioButton:
         self.selected = False
         self.hovered = False
         self.radius = 8
+        self.enabled = True
+        self.extra_text = ""
+        self.extra_color = Colors.TEXT_SECONDARY
 
         # Calculate hit area
-        font = pygame.font.Font(None, FontSizes.BODY)
-        text_surf = font.render(label, True, Colors.TEXT_PRIMARY)
+        self._update_hit_rect()
+
+    def _update_hit_rect(self):
+        """Recalculate hit rect based on current label text."""
+        font = pygame.font.SysFont('arial', FontSizes.BODY - 2)
+        label_width = font.size(self.label)[0]
+        extra_width = font.size(self.extra_text)[0] if self.extra_text else 0
+        total_width = label_width + extra_width + self.radius * 2 + 20
         self.hit_rect = pygame.Rect(
-            x - self.radius,
-            y - self.radius,
-            text_surf.get_width() + self.radius * 2 + 10,
+            self.x - self.radius,
+            self.y - self.radius,
+            total_width,
             self.radius * 2 + 4
         )
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Enable/disable the radio button."""
+        self.enabled = enabled
+        if not enabled:
+            self.selected = False
+            self.hovered = False
+
+    def set_extra(self, text: str, color: Tuple[int, int, int]) -> None:
+        """Display auxiliary text next to the label (e.g., profit preview)."""
+        self.extra_text = text
+        self.extra_color = color
+        self._update_hit_rect()
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         """
@@ -247,6 +269,10 @@ class RadioButton:
         Returns:
             True if selection changed
         """
+        if not self.enabled:
+            self.hovered = False
+            return False
+
         if event.type == pygame.MOUSEMOTION:
             self.hovered = self.hit_rect.collidepoint(event.pos)
 
@@ -260,17 +286,25 @@ class RadioButton:
     def render(self, surface: pygame.Surface):
         """Render radio button."""
         # Outer circle
-        color = Colors.BUTTON_HOVER if self.hovered else Colors.BORDER_LIGHT
-        pygame.draw.circle(surface, color, (self.x, self.y), self.radius, 2)
+        border_color = Colors.BUTTON_HOVER if self.hovered and self.enabled else Colors.BORDER_LIGHT
+        fill_color = Colors.TEXT_ACCENT if self.enabled else Colors.TEXT_SECONDARY
+        pygame.draw.circle(surface, border_color, (self.x, self.y), self.radius, 2)
 
         # Inner filled circle if selected
         if self.selected:
-            pygame.draw.circle(surface, Colors.TEXT_ACCENT, (self.x, self.y), self.radius - 3)
+            pygame.draw.circle(surface, fill_color, (self.x, self.y), self.radius - 3)
 
         # Label - Use SysFont for better rendering
         font = pygame.font.SysFont('arial', FontSizes.BODY - 2)
-        text = font.render(self.label, True, Colors.TEXT_PRIMARY)
+        label_color = Colors.TEXT_PRIMARY if self.enabled else Colors.TEXT_SECONDARY
+        text = font.render(self.label, True, label_color)
         surface.blit(text, (self.x + self.radius + 8, self.y - 8))
+
+        if self.extra_text:
+            extra_font = pygame.font.SysFont('arial', FontSizes.SMALL - 1, bold=True)
+            extra_surf = extra_font.render(self.extra_text, True, self.extra_color)
+            extra_x = self.x + self.radius + 8 + text.get_width() + 8
+            surface.blit(extra_surf, (extra_x, self.y - 6))
 
 
 class Tooltip:
