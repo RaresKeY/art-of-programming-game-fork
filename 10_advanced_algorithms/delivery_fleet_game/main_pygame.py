@@ -224,47 +224,54 @@ class DeliveryFleetApp:
 
         # FIXED LAYOUT - Everything fits within 1000px height
         SIDEBAR_START = 100  # Below title bar
+        self.sidebar_start = SIDEBAR_START
+        self.sidebar_right_start = SIDEBAR_START
+
+        left_panel_x = SIDEBAR_X + 10
+        left_panel_width = SIDEBAR_WIDTH - 20
+        right_panel_x = SIDEBAR_RIGHT_X + 10
+        right_panel_width = SECONDARY_SIDEBAR_WIDTH - 20
 
         # Panels - Carefully calculated to prevent overlaps
-        self.stats_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START, SIDEBAR_WIDTH - 20, 200, "GAME STATUS")
-        self.mode_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 190, SIDEBAR_WIDTH - 20, 85, "MODE")
-        self.agent_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START + 285, SIDEBAR_WIDTH - 20, 180, "AGENTS")
-        self.custom_agent_panel = CollapsiblePanel(SIDEBAR_X + 10, SIDEBAR_START + 475, SIDEBAR_WIDTH - 20, 120, "CUSTOM AGENTS")
-        self.controls_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 605, SIDEBAR_WIDTH - 20, 330, "CONTROLS")
+        self.stats_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 200, "GAME STATUS")
+        self.mode_panel = Panel(left_panel_x, SIDEBAR_START, left_panel_width, 85, "MODE")
+        self.agent_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 180, "AGENTS")
+        self.custom_agent_panel = CollapsiblePanel(right_panel_x, SIDEBAR_START, right_panel_width, 120, "CUSTOM AGENTS")
+        self.controls_panel = Panel(right_panel_x, SIDEBAR_START, right_panel_width, 330, "CONTROLS")
 
         # Warning message area - positioned below controls panel
-        self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 955, SIDEBAR_WIDTH - 20, 80)
+        self.warning_rect = pygame.Rect(right_panel_x, SIDEBAR_START, right_panel_width, 80)
 
         # Stats - Organized in clear rows
-        self.stat_col1 = SIDEBAR_X + 25
-        stat_col_width = (SIDEBAR_WIDTH - 70) // 3
+        self.stat_col1 = left_panel_x + 15
+        stat_col_width = (left_panel_width - 70) // 3
         self.stat_col2 = self.stat_col1 + stat_col_width
         self.stat_col3 = self.stat_col2 + stat_col_width
         self.stats_row_offsets = (40, 95, 145)
         self.stats_divider_offsets = (85, 140)
 
         # Row 1: Day, Balance, Popularity
-        self.day_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[0], "Day:", "1")
-        self.balance_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[0], "Balance:", "$100K")
-        self.popularity_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[0], "Popularity:", "300")
+        self.day_stat = StatDisplay(self.stat_col1, self.stats_panel.rect.y + self.stats_row_offsets[0], "Day:", "1")
+        self.balance_stat = StatDisplay(self.stat_col2, self.stats_panel.rect.y + self.stats_row_offsets[0], "Balance:", "$100K")
+        self.popularity_stat = StatDisplay(self.stat_col3, self.stats_panel.rect.y + self.stats_row_offsets[0], "Popularity:", "300")
 
         # Row 2: Fleet and Packages
-        self.fleet_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[1], "Fleet:", "2 veh")
-        self.packages_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[1], "Pending:", "0")
-        self.capacity_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[1], "Capacity:", "0/0")
+        self.fleet_stat = StatDisplay(self.stat_col1, self.stats_panel.rect.y + self.stats_row_offsets[1], "Fleet:", "2 veh")
+        self.packages_stat = StatDisplay(self.stat_col2, self.stats_panel.rect.y + self.stats_row_offsets[1], "Pending:", "0")
+        self.capacity_stat = StatDisplay(self.stat_col3, self.stats_panel.rect.y + self.stats_row_offsets[1], "Capacity:", "0/0")
 
         # Row 3: Planned route metrics (visible when routes are planned)
-        self.planned_cost_stat = StatDisplay(self.stat_col1, SIDEBAR_START + self.stats_row_offsets[2], "Cost:", "$0")
-        self.planned_revenue_stat = StatDisplay(self.stat_col2, SIDEBAR_START + self.stats_row_offsets[2], "Revenue:", "$0")
-        self.planned_profit_stat = StatDisplay(self.stat_col3, SIDEBAR_START + self.stats_row_offsets[2], "Profit:", "$0")
+        self.planned_cost_stat = StatDisplay(self.stat_col1, self.stats_panel.rect.y + self.stats_row_offsets[2], "Cost:", "$0")
+        self.planned_revenue_stat = StatDisplay(self.stat_col2, self.stats_panel.rect.y + self.stats_row_offsets[2], "Revenue:", "$0")
+        self.planned_profit_stat = StatDisplay(self.stat_col3, self.stats_panel.rect.y + self.stats_row_offsets[2], "Profit:", "$0")
 
         # Store planned metrics
         self.planned_metrics = None
 
         # Mode toggle buttons - positioned in MODE panel
-        mode_btn_x = SIDEBAR_X + 25
-        mode_btn_y = SIDEBAR_START + 230
-        mode_btn_width = (SIDEBAR_WIDTH - 60) // 2
+        mode_btn_x = self.mode_panel.rect.x + 15
+        mode_btn_y = self.mode_panel.rect.y + 40
+        mode_btn_width = (self.mode_panel.rect.width - 40) // 2
         self.mode_auto_btn = Button(mode_btn_x, mode_btn_y, mode_btn_width, 35, "AUTO", self.on_mode_auto)
         self.mode_manual_btn = Button(mode_btn_x + mode_btn_width + 10, mode_btn_y, mode_btn_width, 35, "MANUAL", self.on_mode_manual)
         self._mode_button_offsets = {
@@ -275,8 +282,8 @@ class DeliveryFleetApp:
         }
 
         # Agent radio buttons - positioned in AGENTS panel
-        self.agent_radio_x = SIDEBAR_X + 35
-        radio_y = SIDEBAR_START + 325
+        self.agent_radio_x = self.agent_panel.rect.x + 25
+        radio_y = self.agent_panel.rect.y + 40
         self.agent_radio_spacing = 35
         self.agent_radios = [
             RadioButton(self.agent_radio_x, radio_y, "Greedy", "agent", "greedy"),
@@ -286,8 +293,8 @@ class DeliveryFleetApp:
         ]
         self.agent_radios[0].selected = True
 
-        self.custom_radio_x = SIDEBAR_X + 35
-        custom_radio_y = SIDEBAR_START + 515
+        self.custom_radio_x = self.custom_agent_panel.rect.x + 25
+        custom_radio_y = self.custom_agent_panel.rect.y + 40
         self.custom_radio_spacing = 35
         self.custom_agent_radios = [
             RadioButton(self.custom_radio_x, custom_radio_y, "Agent R", "agent", "agent_r"),
@@ -350,14 +357,21 @@ class DeliveryFleetApp:
         return panel.rect.height
 
     def _reflow_sidebar_layout(self) -> None:
-        y = getattr(self, "sidebar_start", 100)
+        y_left = getattr(self, "sidebar_start", 100)
+        y_right = getattr(self, "sidebar_right_start", 100)
         gap = 10
 
-        for panel in (self.stats_panel, self.mode_panel, self.agent_panel, self.custom_agent_panel, self.controls_panel):
-            panel.rect.y = y
-            y += self._panel_effective_height(panel) + gap
+        for panel in (self.stats_panel, self.mode_panel, self.agent_panel):
+            panel.rect.y = y_left
+            y_left += self._panel_effective_height(panel) + gap
+
+        for panel in (self.custom_agent_panel, self.controls_panel):
+            panel.rect.y = y_right
+            y_right += self._panel_effective_height(panel) + gap
 
         # Reposition warning area beneath controls
+        self.warning_rect.x = self.controls_panel.rect.x
+        self.warning_rect.width = self.controls_panel.rect.width
         self.warning_rect.y = self.controls_panel.rect.y + self.controls_panel.rect.height + 20
 
         # Update stat display positions
@@ -1675,8 +1689,8 @@ class DeliveryFleetApp:
 
             divider_y = self.stats_panel.rect.y + 85
             pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
-                            (SIDEBAR_X + 25, divider_y),
-                            (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y), 1)
+                            (self.stats_panel.rect.x + 15, divider_y),
+                            (self.stats_panel.rect.x + self.stats_panel.rect.width - 15, divider_y), 1)
 
             self.fleet_stat.render(self.screen)
             self.packages_stat.render(self.screen)
@@ -1684,8 +1698,8 @@ class DeliveryFleetApp:
 
             divider_y2 = self.stats_panel.rect.y + 140
             pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
-                            (SIDEBAR_X + 25, divider_y2),
-                            (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y2), 1)
+                            (self.stats_panel.rect.x + 15, divider_y2),
+                            (self.stats_panel.rect.x + self.stats_panel.rect.width - 15, divider_y2), 1)
 
             self.planned_cost_stat.render(self.screen)
             self.planned_revenue_stat.render(self.screen)

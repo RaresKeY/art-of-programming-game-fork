@@ -4,11 +4,6 @@ UI Constants and Configuration for Pygame interface.
 Defines colors, fonts, layout dimensions, and other visual constants.
 """
 
-# Window Dimensions
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 1000  # Back to standard, will use scrolling for manual mode if needed
-FPS = 60
-
 # Layout Dimensions
 MAP_WIDTH = 800
 MAP_HEIGHT = 600
@@ -16,7 +11,15 @@ MAP_X = 0
 MAP_Y = 100  # Below title bar
 
 SIDEBAR_WIDTH = 400
-SIDEBAR_X = 800
+SIDEBAR_X = MAP_WIDTH
+SIDEBAR_GAP = 20
+SECONDARY_SIDEBAR_WIDTH = 400
+SIDEBAR_RIGHT_X = SIDEBAR_X + SIDEBAR_WIDTH + SIDEBAR_GAP
+
+# Window Dimensions
+WINDOW_WIDTH = MAP_WIDTH + SIDEBAR_WIDTH + SIDEBAR_GAP + SECONDARY_SIDEBAR_WIDTH
+WINDOW_HEIGHT = 1000  # Back to standard, will use scrolling for manual mode if needed
+FPS = 60
 
 TITLE_BAR_HEIGHT = 100
 METRICS_BAR_HEIGHT = 100
