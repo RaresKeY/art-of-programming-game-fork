@@ -7,6 +7,13 @@ financial tracking, and history logging.
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
+from ..core.difficulty import (
+    DemandTier,
+    DifficultySnapshot,
+    clamp_popularity,
+    compute_popularity_delta,
+    create_difficulty_snapshot,
+)
 from .vehicle import Vehicle, VehicleType
 from .package import Package
 from .route import Route
@@ -39,6 +46,10 @@ class DayHistory:
     routes_count: int = 0
     total_distance: float = 0.0
     balance_end: float = 0.0
+    popularity_start: int = 0
+    popularity_end: int = 0
+    popularity_delta: int = 0
+    demand_tier: str = DemandTier.CALM.value
 
     @property
     def delivery_rate(self) -> float:
@@ -85,6 +96,15 @@ class GameState:
         self.marketing_level: int = 1  # Level 1-5
         self.base_package_volume: float = 25.0  # Base daily m³
 
+        # Popularity & difficulty tracking
+        self.popularity_score: int = 300
+        self.last_popularity_delta: int = 0
+        self.popularity_history: List[int] = [self.popularity_score]
+        self.recent_penalty_score: float = 0.0
+        self.current_demand_tier: DemandTier = DemandTier.CALM
+        self.last_difficulty_snapshot: Optional[DifficultySnapshot] = None
+        self.reward_multiplier: float = 1.0
+
     def add_vehicle(self, vehicle: Vehicle) -> None:
         """
         Add a vehicle to the fleet.
@@ -126,6 +146,43 @@ class GameState:
         for pkg in packages:
             pkg.received_day = self.current_day
         self.packages_pending.extend(packages)
+
+    def register_difficulty_snapshot(self, snapshot: DifficultySnapshot) -> None:
+        """Persist the latest difficulty snapshot so UI and systems can query it."""
+        self.current_demand_tier = snapshot.demand_tier
+        self.last_difficulty_snapshot = snapshot
+        self.reward_multiplier = snapshot.modifiers.get("reward_multiplier", 1.0)
+
+    def compute_difficulty_snapshot(self) -> DifficultySnapshot:
+        """Rebuild the difficulty snapshot based on current popularity/marketing."""
+        snapshot = create_difficulty_snapshot(
+            self.popularity_score,
+            self.marketing_level,
+            self.current_day,
+            int(round(self.recent_penalty_score)),
+        )
+        self.register_difficulty_snapshot(snapshot)
+        return snapshot
+
+    def _update_popularity(self, delivered_ratio: float, profit: float, penalties: int) -> None:
+        """Update popularity tracking after a day completes."""
+        delta = compute_popularity_delta(
+            delivered_ratio,
+            profit,
+            penalties,
+            self.current_day,
+            self.popularity_score,
+        )
+        self.last_popularity_delta = delta
+        self.popularity_score = clamp_popularity(self.popularity_score + delta)
+        self.popularity_history.append(self.popularity_score)
+
+        # Penalty score decays over time to allow recovery.
+        self.recent_penalty_score = max(0.0, self.recent_penalty_score * 0.6 + penalties)
+
+    def get_recent_penalty_score(self) -> int:
+        """Return rounded penalty score for difficulty calculations."""
+        return int(round(self.recent_penalty_score))
 
     def set_routes(self, routes: List[Route]) -> None:
         """
@@ -170,6 +227,7 @@ class GameState:
 
         # Update package lists
         packages_attempted = len(self.packages_pending)
+        rush_attempts = sum(1 for pkg in self.packages_pending if pkg.is_rush)
         self.packages_delivered.extend(delivered_packages)
 
         # Remove delivered packages from pending
@@ -180,10 +238,23 @@ class GameState:
         # Update balance
         self.balance += total_profit
 
+        delivered_count = len(delivered_packages)
+        delivered_ratio = delivered_count / packages_attempted if packages_attempted > 0 else 1.0
+        undelivered_count = max(0, packages_attempted - delivered_count)
+        delivered_rush = sum(1 for pkg in delivered_packages if pkg.is_rush)
+        rush_failures = max(0, rush_attempts - delivered_rush)
+        penalty_units = undelivered_count + rush_failures * 2
+
+        popularity_before = self.popularity_score
+        self._update_popularity(delivered_ratio, total_profit, penalty_units)
+        popularity_after = self.popularity_score
+        popularity_delta = self.last_popularity_delta
+        snapshot = self.compute_difficulty_snapshot()
+
         # Record history
         day_record = DayHistory(
             day=self.current_day,
-            packages_delivered=len(delivered_packages),
+            packages_delivered=delivered_count,
             packages_attempted=packages_attempted,
             revenue=total_revenue,
             costs=total_cost,
@@ -191,7 +262,11 @@ class GameState:
             agent_used=agent_name,
             routes_count=len(self.current_routes),
             total_distance=total_distance,
-            balance_end=self.balance
+            balance_end=self.balance,
+            popularity_start=popularity_before,
+            popularity_end=popularity_after,
+            popularity_delta=popularity_delta,
+            demand_tier=snapshot.demand_tier.value,
         )
         self.history.append(day_record)
 
@@ -209,6 +284,8 @@ class GameState:
         self.packages_in_transit = []
         # Clear pending packages - they expire if not delivered
         self.packages_pending = []
+        # Penalty score decays further at day rollover to allow recovery
+        self.recent_penalty_score *= 0.5
 
     def get_available_fleet(self) -> List[Vehicle]:
         """
@@ -250,7 +327,9 @@ class GameState:
             'total_packages': total_packages,
             'avg_daily_profit': avg_daily_profit,
             'delivery_rate': delivery_rate,
-            'fleet_size': len(self.fleet)
+            'fleet_size': len(self.fleet),
+            'popularity': self.popularity_score,
+            'demand_tier': self.current_demand_tier.value,
         }
 
     def is_game_over(self) -> tuple[bool, str]:
@@ -356,7 +435,9 @@ class GameState:
     def __str__(self) -> str:
         return (f"Day {self.current_day} | Balance: ${self.balance:.2f} | "
                 f"Fleet: {len(self.fleet)} vehicles | "
-                f"Pending: {len(self.packages_pending)} packages")
+                f"Pending: {len(self.packages_pending)} packages | "
+                f"Popularity: {self.popularity_score}")
 
     def __repr__(self) -> str:
-        return f"GameState(day={self.current_day}, balance=${self.balance:.2f})"
+        return (f"GameState(day={self.current_day}, balance=${self.balance:.2f}, "
+                f"popularity={self.popularity_score})")

@@ -42,7 +42,13 @@ class PackageGenerator:
         self.delivery_map = delivery_map
         self.base_seed = base_seed
 
-    def generate_packages(self, target_volume: float, day: int, marketing_level: int = 1) -> List[Package]:
+    def generate_packages(
+        self,
+        target_volume: float,
+        day: int,
+        marketing_level: int = 1,
+        modifiers: Dict[str, float] | None = None,
+    ) -> List[Package]:
         """
         Generate packages with intelligent difficulty scaling.
 
@@ -52,10 +58,19 @@ class PackageGenerator:
             target_volume: Target total volume in m³
             day: Current day number (for IDs and difficulty)
             marketing_level: Current marketing level (1-5)
+            modifiers: Difficulty modifiers from popularity system
 
         Returns:
             List of generated packages
         """
+        modifiers = modifiers or {}
+        volume_multiplier = modifiers.get('volume_multiplier', 1.0)
+        priority_bias = modifiers.get('priority_bias', 0.0)
+        rush_ratio = modifiers.get('rush_ratio', 0.0)
+        reward_multiplier = modifiers.get('reward_multiplier', 1.0)
+
+        target_volume *= volume_multiplier
+
         # Set day-specific seed for reproducibility
         random.seed(self.base_seed + day)
 
@@ -67,12 +82,28 @@ class PackageGenerator:
 
         # Generate packages with clustering
         packages = self._generate_clustered_packages(
-            target_volume, day, marketing_level, difficulty, cluster_strategy
+            target_volume,
+            day,
+            marketing_level,
+            difficulty,
+            cluster_strategy,
+            priority_bias,
+            rush_ratio,
+            reward_multiplier,
         )
 
         # Add strategic outliers based on difficulty
         if difficulty in ['early', 'mid', 'late']:
-            packages.extend(self._generate_outliers(day, difficulty, target_volume * 0.1))
+            packages.extend(
+                self._generate_outliers(
+                    day,
+                    difficulty,
+                    target_volume * 0.1,
+                    priority_bias,
+                    rush_ratio,
+                    reward_multiplier,
+                )
+            )
 
         # Adjust priorities based on difficulty
         packages = self._adjust_priorities(packages, difficulty)
@@ -127,7 +158,10 @@ class PackageGenerator:
         day: int,
         marketing_level: int,
         difficulty: str,
-        cluster_strategy: Dict[str, float]
+        cluster_strategy: Dict[str, float],
+        priority_bias: float,
+        rush_ratio: float,
+        reward_multiplier: float,
     ) -> List[Package]:
         """Generate packages distributed according to cluster strategy."""
         packages = []
@@ -162,9 +196,14 @@ class PackageGenerator:
 
                 # Determine priority (increases with difficulty)
                 priority_rate = 0.1 if difficulty == 'tutorial' else 0.15 if difficulty == 'early' else 0.2
+                priority_rate = max(0.05, min(0.8, priority_rate + priority_bias))
                 priority = 3 if random.random() < priority_rate else 1
                 if priority == 3:
                     payment *= 1.5
+
+                is_rush = random.random() < rush_ratio
+                if is_rush:
+                    payment *= 1.1  # rush premium
 
                 # Create package
                 package_id = f"pkg_d{day}_{package_count + 1:03d}"
@@ -174,10 +213,12 @@ class PackageGenerator:
                     id=package_id,
                     destination=destination,
                     volume_m3=round(volume, 1),
-                    payment=round(payment, 2),
+                    payment=round(payment * reward_multiplier, 2),
                     priority=priority,
                     description=description,
-                    received_day=day
+                    received_day=day,
+                    is_rush=is_rush,
+                    bonus_multiplier=reward_multiplier
                 )
 
                 packages.append(package)
@@ -213,7 +254,15 @@ class PackageGenerator:
                 ('large', 4.0, 6.0, 0.3),
             ]
 
-    def _generate_outliers(self, day: int, difficulty: str, target_volume: float) -> List[Package]:
+    def _generate_outliers(
+        self,
+        day: int,
+        difficulty: str,
+        target_volume: float,
+        priority_bias: float,
+        rush_ratio: float,
+        reward_multiplier: float,
+    ) -> List[Package]:
         """Generate strategic outlier packages (far from main clusters)."""
         outliers = []
 
@@ -233,6 +282,15 @@ class PackageGenerator:
             volume = min(volume_per_outlier, random.uniform(1.5, 3.5))
             distance = self.delivery_map.distance(self.delivery_map.depot, destination)
             payment = self._calculate_payment(volume, distance) * 1.3  # Pay more for outliers
+            priority_rate = 0.15 if difficulty == 'early' else 0.22 if difficulty == 'mid' else 0.28
+            priority_rate = max(0.05, min(0.85, priority_rate + priority_bias))
+            priority = 3 if random.random() < priority_rate else 1
+            if priority == 3:
+                payment *= 1.5
+
+            is_rush = random.random() < rush_ratio
+            if is_rush:
+                payment *= 1.15
 
             package_id = f"pkg_d{day}_outlier_{i + 1}"
             description = self._generate_description(volume, distance)
@@ -241,10 +299,12 @@ class PackageGenerator:
                 id=package_id,
                 destination=destination,
                 volume_m3=round(volume, 1),
-                payment=round(payment, 2),
-                priority=1,
+                payment=round(payment * reward_multiplier, 2),
+                priority=priority,
                 description=f"[OUTLIER] {description}",
-                received_day=day
+                received_day=day,
+                is_rush=is_rush,
+                bonus_multiplier=reward_multiplier
             )
             outliers.append(outlier)
 

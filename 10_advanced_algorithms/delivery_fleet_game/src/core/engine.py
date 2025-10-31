@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from ..models import GameState, Package, Route, DeliveryMap, VehicleType
 from ..utils import DataLoader, calculate_route_metrics
 from ..utils.package_generator import PackageGenerator
+from .difficulty import DifficultySnapshot
 
 
 class GameEngine:
@@ -39,6 +40,7 @@ class GameEngine:
 
         # Agent registry
         self.agents: Dict[str, object] = {}  # Will be populated with RouteAgent instances
+        self.current_difficulty: Optional[DifficultySnapshot] = None
 
         # Initialize data
         self._load_static_data()
@@ -62,6 +64,7 @@ class GameEngine:
             "initial_game_state.json",
             self.vehicle_types
         )
+        self.current_difficulty = self.game_state.compute_difficulty_snapshot()
         print(f"✓ New game started: {self.game_state}")
 
     def load_game(self, save_file: str = "savegame.json") -> None:
@@ -75,6 +78,7 @@ class GameEngine:
             save_file,
             self.vehicle_types
         )
+        self.current_difficulty = self.game_state.compute_difficulty_snapshot()
         print(f"✓ Game loaded: {self.game_state}")
 
     def save_game(self, save_file: str = "savegame.json") -> None:
@@ -102,6 +106,15 @@ class GameEngine:
         self.agents[name] = agent
         print(f"✓ Registered agent: {name}")
 
+    def _refresh_difficulty_snapshot(self) -> Optional[DifficultySnapshot]:
+        """Rebuild the difficulty snapshot from the current game state."""
+        if not self.game_state:
+            self.current_difficulty = None
+            return None
+        snapshot = self.game_state.compute_difficulty_snapshot()
+        self.current_difficulty = snapshot
+        return snapshot
+
     def load_day_packages(self, day: Optional[int] = None) -> List[Package]:
         """
         Load or generate packages for a specific day.
@@ -118,16 +131,23 @@ class GameEngine:
         if day is None:
             day = self.game_state.current_day if self.game_state else 1
 
-        # Use intelligent generation for all days
+        snapshot = self._refresh_difficulty_snapshot()
+        modifiers = snapshot.modifiers if snapshot else {}
+
         target_volume = self.game_state.get_daily_package_volume()
         marketing_level = self.game_state.marketing_level
 
-        print(f"📦 Generating packages for day {day} (Marketing Lvl {marketing_level}: {target_volume:.1f}m³)")
+        tier_label = snapshot.demand_tier.value if snapshot else "Unknown"
+        print(
+            f"📦 Generating packages for day {day}"
+            f" | Marketing Lvl {marketing_level} | Demand: {tier_label}"
+        )
 
         packages = self.package_generator.generate_packages(
             target_volume=target_volume,
             day=day,
-            marketing_level=marketing_level
+            marketing_level=marketing_level,
+            modifiers=modifiers,
         )
         return packages
 
@@ -145,6 +165,12 @@ class GameEngine:
         print(f"Packages to deliver: {len(packages)}")
         print(f"Available fleet: {len(self.game_state.fleet)} vehicles")
         print(f"Current balance: ${self.game_state.balance:,.2f}")
+        if self.current_difficulty:
+            print(
+                f"Popularity {self.current_difficulty.popularity} | "
+                f"Demand {self.current_difficulty.demand_tier.value} | "
+                f"Challenge {self.current_difficulty.challenge_index:.0f}"
+            )
 
     def test_agent(self, agent_name: str) -> Dict:
         """
@@ -247,6 +273,10 @@ class GameEngine:
             print(f"Costs: ${last_day.costs:.2f}")
             print(f"Profit: ${last_day.profit:+.2f}")
             print(f"New Balance: ${last_day.balance_end:,.2f}")
+            print(
+                f"Popularity: {last_day.popularity_end} "
+                f"({last_day.popularity_delta:+}) | Demand: {last_day.demand_tier}"
+            )
 
         # Check game over conditions
         game_over, reason = self.game_state.is_game_over()
@@ -254,6 +284,9 @@ class GameEngine:
             print(f"\n{'='*50}")
             print(f"GAME OVER: {reason}")
             print(f"{'='*50}")
+
+        # Prepare difficulty for the upcoming day
+        self._refresh_difficulty_snapshot()
 
         return profit
 

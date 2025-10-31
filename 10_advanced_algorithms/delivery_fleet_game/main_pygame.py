@@ -218,7 +218,7 @@ class DeliveryFleetApp:
         SIDEBAR_START = 100  # Below title bar
 
         # Panels - Carefully calculated to prevent overlaps
-        self.stats_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START, SIDEBAR_WIDTH - 20, 180, "GAME STATUS")
+        self.stats_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START, SIDEBAR_WIDTH - 20, 200, "GAME STATUS")
         self.mode_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 190, SIDEBAR_WIDTH - 20, 85, "MODE")
         self.agent_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 285, SIDEBAR_WIDTH - 20, 250, "AGENTS")  # Increased for student agents
         self.controls_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 545, SIDEBAR_WIDTH - 20, 320, "CONTROLS")  # Adjusted position
@@ -227,24 +227,28 @@ class DeliveryFleetApp:
         self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 845, SIDEBAR_WIDTH - 20, 80)
 
         # Stats - Organized in clear rows
-        stat_x = SIDEBAR_X + 25
+        stat_col1 = SIDEBAR_X + 25
+        stat_col_width = (SIDEBAR_WIDTH - 70) // 3
+        stat_col2 = stat_col1 + stat_col_width
+        stat_col3 = stat_col2 + stat_col_width
         stat_row1_y = SIDEBAR_START + 40
         stat_row2_y = SIDEBAR_START + 95
         stat_row3_y = SIDEBAR_START + 145
 
-        # Row 1: Day and Balance
-        self.day_stat = StatDisplay(stat_x, stat_row1_y, "Day:", "1")
-        self.balance_stat = StatDisplay(stat_x + 125, stat_row1_y, "Balance:", "$100K")
+        # Row 1: Day, Balance, Popularity
+        self.day_stat = StatDisplay(stat_col1, stat_row1_y, "Day:", "1")
+        self.balance_stat = StatDisplay(stat_col2, stat_row1_y, "Balance:", "$100K")
+        self.popularity_stat = StatDisplay(stat_col3, stat_row1_y, "Popularity:", "300")
 
         # Row 2: Fleet and Packages
-        self.fleet_stat = StatDisplay(stat_x, stat_row2_y, "Fleet:", "2 veh")
-        self.packages_stat = StatDisplay(stat_x + 125, stat_row2_y, "Pending:", "0")
-        self.capacity_stat = StatDisplay(stat_x + 250, stat_row2_y, "Capacity:", "0/0")
+        self.fleet_stat = StatDisplay(stat_col1, stat_row2_y, "Fleet:", "2 veh")
+        self.packages_stat = StatDisplay(stat_col2, stat_row2_y, "Pending:", "0")
+        self.capacity_stat = StatDisplay(stat_col3, stat_row2_y, "Capacity:", "0/0")
 
         # Row 3: Planned route metrics (visible when routes are planned)
-        self.planned_cost_stat = StatDisplay(stat_x, stat_row3_y, "Cost:", "$0")
-        self.planned_revenue_stat = StatDisplay(stat_x + 125, stat_row3_y, "Revenue:", "$0")
-        self.planned_profit_stat = StatDisplay(stat_x + 250, stat_row3_y, "Profit:", "$0")
+        self.planned_cost_stat = StatDisplay(stat_col1, stat_row3_y, "Cost:", "$0")
+        self.planned_revenue_stat = StatDisplay(stat_col2, stat_row3_y, "Revenue:", "$0")
+        self.planned_profit_stat = StatDisplay(stat_col3, stat_row3_y, "Profit:", "$0")
 
         # Store planned metrics
         self.planned_metrics = None
@@ -330,6 +334,23 @@ class DeliveryFleetApp:
                 button.text = f"[{labels[idx]}]"
             else:
                 button.text = labels[idx]
+
+    def _update_planned_metrics_display(self):
+        """Refresh the cost/revenue/profit row based on planned metrics."""
+        if self.planned_metrics:
+            cost = self.planned_metrics.get('total_cost', 0.0)
+            revenue = self.planned_metrics.get('total_revenue', 0.0)
+            profit = self.planned_metrics.get('total_profit', 0.0)
+
+            self.planned_cost_stat.set_value(f"${cost:,.0f}", Colors.TEXT_SECONDARY)
+            revenue_color = Colors.PROFIT_POSITIVE if revenue >= 0 else Colors.PROFIT_NEGATIVE
+            self.planned_revenue_stat.set_value(f"${revenue:,.0f}", revenue_color)
+            profit_color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
+            self.planned_profit_stat.set_value(f"${profit:,.0f}", profit_color)
+        else:
+            self.planned_cost_stat.set_value("$0", Colors.TEXT_SECONDARY)
+            self.planned_revenue_stat.set_value("$0", Colors.TEXT_SECONDARY)
+            self.planned_profit_stat.set_value("$0", Colors.TEXT_SECONDARY)
 
     def start_day_flow(self):
         """Begin a new day, auto-plan routes when capacity allows."""
@@ -443,6 +464,7 @@ class DeliveryFleetApp:
             self.planned_metrics = metrics
             self.engine.apply_agent_solution(agent_name)
             self.buttons['execute'].enabled = True
+            self._update_planned_metrics_display()
 
             profit = metrics['total_profit']
             color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
@@ -453,6 +475,7 @@ class DeliveryFleetApp:
             self.planned_metrics = None
             self.engine.game_state.set_routes([])
             self.buttons['execute'].enabled = False
+            self._update_planned_metrics_display()
             if show_feedback:
                 self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
 
@@ -759,15 +782,28 @@ class DeliveryFleetApp:
 
         self.buttons['execute'].enabled = False
         self.buttons['next_day'].enabled = True
-        self.planned_cost_stat.set_value("$0", Colors.TEXT_SECONDARY)
-        self.planned_revenue_stat.set_value("$0", Colors.TEXT_SECONDARY)
-        self.planned_profit_stat.set_value("$0", Colors.TEXT_SECONDARY)
+        self._update_planned_metrics_display()
         self.autoplay_action = None
 
         last_day = self.engine.game_state.get_last_day_summary()
         if last_day:
-            color = Colors.PROFIT_POSITIVE if last_day.profit >= 0 else Colors.PROFIT_NEGATIVE
-            self.show_warning(f"Day complete! Profit: ${last_day.profit:+.2f}", color)
+            profit_color = Colors.PROFIT_POSITIVE if last_day.profit >= 0 else Colors.PROFIT_NEGATIVE
+            severity_color = profit_color
+            if last_day.popularity_delta < 0:
+                severity_color = Colors.PROFIT_NEGATIVE
+            elif last_day.popularity_delta > 0 and severity_color != Colors.PROFIT_NEGATIVE:
+                severity_color = Colors.PROFIT_POSITIVE
+
+            message = (
+                f"Day complete! Profit {last_day.profit:+,.0f} | "
+                f"Popularity {last_day.popularity_end} ({last_day.popularity_delta:+}) | "
+                f"Demand {last_day.demand_tier}"
+            )
+            if last_day.popularity_delta < 0:
+                message += " – Reputation slipped, stabilize deliveries!"
+            elif last_day.popularity_delta > 10:
+                message += " – Demand is surging, prepare your fleet!"
+            self.show_warning(message, severity_color)
 
         self.update_stats()
         self.update_agent_previews()
@@ -1026,6 +1062,15 @@ class DeliveryFleetApp:
             balance_str = f"${state.balance:.0f}"
         self.balance_stat.set_value(balance_str, balance_color)
 
+        tier_label = state.current_demand_tier.value if hasattr(state.current_demand_tier, 'value') else str(state.current_demand_tier)
+        pop_color = Colors.TEXT_ACCENT
+        if state.popularity_score >= 700:
+            pop_color = Colors.PROFIT_POSITIVE
+        elif state.popularity_score <= 200:
+            pop_color = Colors.PROFIT_NEGATIVE
+        pop_value = f"{state.popularity_score} ({tier_label})"
+        self.popularity_stat.set_value(pop_value, pop_color)
+
         self.fleet_stat.set_value(f"{len(state.fleet)} veh")
         self.packages_stat.set_value(f"{len(state.packages_pending)}")
 
@@ -1034,6 +1079,7 @@ class DeliveryFleetApp:
         fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in state.fleet)
         capacity_color = Colors.PROFIT_POSITIVE if total_pkg_volume <= fleet_capacity else Colors.PROFIT_NEGATIVE
         self.capacity_stat.set_value(f"{total_pkg_volume:.0f}/{fleet_capacity:.0f}", capacity_color)
+        self._update_planned_metrics_display()
 
     def update_hover_tooltip(self, mouse_pos):
         """Update tooltip based on mouse position."""
@@ -1054,6 +1100,8 @@ class DeliveryFleetApp:
                     f"Payment: ${pkg.payment}\n"
                     f"Priority: {pkg.priority}"
                 )
+                if getattr(pkg, 'is_rush', False):
+                    tooltip_text += "\nRush order"
                 self.tooltip.show(tooltip_text, (mouse_pos[0] + 15, mouse_pos[1] + 15))
                 return
 
@@ -1385,6 +1433,7 @@ class DeliveryFleetApp:
         # Stats - Row 1
         self.day_stat.render(self.screen)
         self.balance_stat.render(self.screen)
+        self.popularity_stat.render(self.screen)
 
         # Divider line after row 1
         divider_y = self.stats_panel.rect.y + 85
@@ -1397,18 +1446,16 @@ class DeliveryFleetApp:
         self.packages_stat.render(self.screen)
         self.capacity_stat.render(self.screen)
 
-        # Divider line after row 2 (only if planned metrics exist)
-        if self.planned_metrics:
-            divider_y2 = self.stats_panel.rect.y + 140
-            pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
-                            (SIDEBAR_X + 25, divider_y2),
-                            (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y2), 1)
+        # Divider line after row 2
+        divider_y2 = self.stats_panel.rect.y + 140
+        pygame.draw.line(self.screen, Colors.BORDER_LIGHT,
+                        (SIDEBAR_X + 25, divider_y2),
+                        (SIDEBAR_X + SIDEBAR_WIDTH - 25, divider_y2), 1)
 
-        # Planned route metrics (only show when routes are planned)
-        if self.planned_metrics:
-            self.planned_cost_stat.render(self.screen)
-            self.planned_revenue_stat.render(self.screen)
-            self.planned_profit_stat.render(self.screen)
+        # Planned route metrics
+        self.planned_cost_stat.render(self.screen)
+        self.planned_revenue_stat.render(self.screen)
+        self.planned_profit_stat.render(self.screen)
 
         # Mode toggle buttons
         self.mode_auto_btn.render(self.screen)
