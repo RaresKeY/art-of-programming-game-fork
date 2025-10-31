@@ -29,6 +29,8 @@ class Package:
     priority: int = 1
     description: Optional[str] = None
     received_day: int = 0
+    is_rush: bool = False
+    bonus_multiplier: float = 1.0
 
     def __lt__(self, other: 'Package') -> bool:
         """

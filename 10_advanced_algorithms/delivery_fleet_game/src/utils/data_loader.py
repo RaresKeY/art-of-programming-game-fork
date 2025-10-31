@@ -102,7 +102,9 @@ class DataLoader:
                 volume_m3=pkg_data['volume_m3'],
                 payment=pkg_data['payment'],
                 priority=pkg_data.get('priority', 1),
-                description=pkg_data.get('description', None)
+                description=pkg_data.get('description', None),
+                is_rush=pkg_data.get('is_rush', False),
+                bonus_multiplier=pkg_data.get('bonus_multiplier', 1.0)
             )
             packages.append(package)
 
@@ -194,6 +196,16 @@ class DataLoader:
             start_day=data['current_day']
         )
 
+        game_state.marketing_level = data.get('marketing_level', game_state.marketing_level)
+        game_state.popularity_score = data.get('popularity', game_state.popularity_score)
+        game_state.last_popularity_delta = data.get('popularity_delta', 0)
+        game_state.popularity_history = [game_state.popularity_score]
+
+        if 'popularity_history' in data and isinstance(data['popularity_history'], list):
+            game_state.popularity_history = data['popularity_history'][-20:]  # keep recent slice
+            game_state.popularity_score = game_state.popularity_history[-1]
+
+
         # Load fleet
         if vehicle_types:
             for vehicle_data in data.get('fleet', []):
@@ -222,6 +234,11 @@ class DataLoader:
         data = {
             "current_day": game_state.current_day,
             "balance": game_state.balance,
+            "marketing_level": game_state.marketing_level,
+            "popularity": game_state.popularity_score,
+            "popularity_delta": game_state.last_popularity_delta,
+            "popularity_history": game_state.popularity_history[-50:],
+            "demand_tier": game_state.current_demand_tier.value,
             "fleet": [
                 {
                     "id": v.id,
@@ -243,7 +260,11 @@ class DataLoader:
                     "costs": h.costs,
                     "profit": h.profit,
                     "agent_used": h.agent_used,
-                    "balance_end": h.balance_end
+                    "balance_end": h.balance_end,
+                    "popularity_start": h.popularity_start,
+                    "popularity_end": h.popularity_end,
+                    "popularity_delta": h.popularity_delta,
+                    "demand_tier": h.demand_tier,
                 }
                 for h in game_state.history
             ]

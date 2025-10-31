@@ -102,6 +102,10 @@ class PackageCard:
             badge_text = font_info.render(f"P{self.package.priority}", True, Colors.TEXT_ACCENT)
             surface.blit(badge_text, (self.rect.x + 5, self.rect.y + 42))
 
+        if getattr(self.package, 'is_rush', False):
+            rush_text = font_info.render("RUSH", True, Colors.PROFIT_NEGATIVE)
+            surface.blit(rush_text, (self.rect.x + 50, self.rect.y + 42))
+
         # Assigned indicator
         if self.assigned_vehicle_id:
             assigned_text = font_info.render(f"→V{self.assigned_vehicle_id[-2:]}", True, Colors.TEXT_ACCENT)
