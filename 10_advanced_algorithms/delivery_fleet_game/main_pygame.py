@@ -184,6 +184,7 @@ class DeliveryFleetApp:
         self.autoplay_timer = 0.0
         self.autoplay_action: Optional[str] = None
         self.speed_button_keys = ['speed1', 'speed2', 'speed3']
+        self.auto_plan_deferred = False
 
         # Create UI
         self._create_ui_components()
@@ -445,6 +446,7 @@ class DeliveryFleetApp:
         self.engine.start_day()
 
         self.render_routes = []
+        self.auto_plan_deferred = False
 
         if not self.engine.game_state.packages_pending:
             self.show_warning("No packages for this day!", Colors.TEXT_ACCENT)
@@ -456,6 +458,8 @@ class DeliveryFleetApp:
         fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
 
         if fleet_capacity <= 0 or total_volume > fleet_capacity:
+            if self.mode == "AUTO":
+                self.auto_plan_deferred = True
             self.show_day_summary(total_volume, fleet_capacity)
         else:
             if self.mode == "AUTO":
@@ -465,8 +469,10 @@ class DeliveryFleetApp:
                     total_volume = sum(pkg.volume_m3 for pkg in self.engine.game_state.packages_pending)
                     fleet_capacity = sum(v.vehicle_type.capacity_m3 for v in self.engine.game_state.fleet)
                     if fleet_capacity <= 0 or total_volume > fleet_capacity:
+                        self.auto_plan_deferred = True
                         self.show_day_summary(total_volume, fleet_capacity)
                     else:
+                        self.auto_plan_deferred = True
                         self.show_day_preview(total_volume, fleet_capacity)
             else:
                 if not self.autoplay_enabled:
@@ -548,6 +554,7 @@ class DeliveryFleetApp:
 
     def auto_plan_routes(self, show_feedback: bool = True):
         """Plan routes using the selected agent in AUTO mode."""
+        self.auto_plan_deferred = False
         if not self.engine.game_state or not self.engine.game_state.packages_pending:
             if show_feedback:
                 self.show_warning("No packages available to plan!", Colors.TEXT_ACCENT)
@@ -585,6 +592,16 @@ class DeliveryFleetApp:
             self._update_planned_metrics_display()
             if show_feedback:
                 self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
+
+    def _maybe_execute_deferred_auto_plan(self, show_feedback: bool = True) -> None:
+        """Run deferred auto-planning once blocking modals are closed."""
+        if not self.auto_plan_deferred:
+            return
+        if self.mode != "AUTO":
+            self.auto_plan_deferred = False
+            return
+        self.auto_plan_deferred = False
+        self.auto_plan_routes(show_feedback=show_feedback)
 
     def toggle_autoplay(self):
         """Toggle automatic day progression."""
@@ -763,6 +780,7 @@ class DeliveryFleetApp:
             self.show_warning(message, Colors.TEXT_ACCENT)
         else:
             self.show_warning("Manual planning: review packages and build routes.", Colors.TEXT_ACCENT)
+        self._maybe_execute_deferred_auto_plan(show_feedback=True)
 
     def show_capacity_warning(self, needed: float, available: float):
         """Show warning when capacity is insufficient."""
@@ -819,10 +837,15 @@ class DeliveryFleetApp:
         modal_btn_x = self.day_summary_modal.x + 160
         modal_btn_y = self.day_summary_modal.y + 480
         buttons = [
-            Button(modal_btn_x, modal_btn_y, 220, 40, "Start Planning", lambda: self.day_summary_modal.hide()),
+            Button(modal_btn_x, modal_btn_y, 220, 40, "Start Planning", lambda: self._handle_day_preview_continue()),
         ]
 
         self.day_summary_modal.show(content, buttons)
+
+    def _handle_day_preview_continue(self):
+        """Close day preview and trigger deferred auto-planning if required."""
+        self.day_summary_modal.hide()
+        self._maybe_execute_deferred_auto_plan(show_feedback=True)
 
     def close_modal_and_buy(self):
         """Close modal and open buy vehicle."""
@@ -838,6 +861,7 @@ class DeliveryFleetApp:
         )
         if self.mode == "MANUAL":
             self.buttons['execute'].enabled = True
+        self._maybe_execute_deferred_auto_plan(show_feedback=True)
 
     def on_buy_vehicle(self):
         """Show vehicle purchase modal."""
@@ -886,13 +910,24 @@ class DeliveryFleetApp:
 
         # Cancel button at bottom with spacing
         cancel_btn_y = modal_y + self.vehicle_modal.height - 60
-        cancel_btn = Button(modal_x + (self.vehicle_modal.width - 200) // 2, cancel_btn_y,
-                          200, 40, "Cancel", lambda: self.vehicle_modal.hide())
+        cancel_btn = Button(
+            modal_x + (self.vehicle_modal.width - 200) // 2,
+            cancel_btn_y,
+            200,
+            40,
+            "Cancel",
+            lambda: self._cancel_vehicle_purchase()
+        )
         buttons.append(cancel_btn)
 
         # Pass balance as extra data
         extra_data = {'balance': self.engine.game_state.balance}
         self.vehicle_modal.show(content, buttons, extra_data)
+
+    def _cancel_vehicle_purchase(self):
+        """Handle canceling the vehicle modal and resume auto-planning if queued."""
+        self.vehicle_modal.hide()
+        self._maybe_execute_deferred_auto_plan(show_feedback=False)
 
     def purchase_vehicle(self, vehicle_type_name: str):
         """Purchase a vehicle."""
@@ -1299,12 +1334,15 @@ class DeliveryFleetApp:
                     # Close modals first, then quit
                     if self.vehicle_modal.visible:
                         self.vehicle_modal.hide()
+                        self._maybe_execute_deferred_auto_plan(show_feedback=False)
                     elif self.capacity_warning_modal.visible:
                         self.capacity_warning_modal.hide()
+                        self._maybe_execute_deferred_auto_plan(show_feedback=True)
                     elif self.marketing_modal.visible:
                         self.marketing_modal.hide()
                     elif self.day_summary_modal.visible:
                         self.day_summary_modal.hide()
+                        self._maybe_execute_deferred_auto_plan(show_feedback=True)
                     elif self.comparison_modal.visible:
                         self.comparison_modal.hide()
                     else:

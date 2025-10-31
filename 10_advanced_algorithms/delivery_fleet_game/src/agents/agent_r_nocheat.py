@@ -8,15 +8,21 @@ import copy
 class BoxData:
     def __init__(self):
         self.distances = dict()
+        self._get_distances()
 
     @staticmethod
-    def _calc_distance(pos1: tuple[float], pos2: tuple[float]):
-        pass
+    def _calc_distance(pos1: tuple[float, float], pos2: tuple[float, float]):
+        return ((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2) ** 0.5
     
-    def _get_distances(self, box: Package, boxes: List[Package]) -> List[float]:
+    def _get_new_distances(self, box: Package, boxes: List[Package]) -> List[float]:
+        self.distances = dict()
+
         for other_b in boxes:
-                if box is not other_b:
-                    self.distances[other_b] = box.destination
+            if box is not other_b:
+                self.distances[other_b] = self._calc_distance(box.destination, other_b.destination)
+
+    def greedy_clsuters(self):
+        pass
 
 
 class RAgent(RouteAgent):
