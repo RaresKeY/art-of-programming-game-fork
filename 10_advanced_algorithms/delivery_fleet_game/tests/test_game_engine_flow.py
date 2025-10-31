@@ -48,6 +48,7 @@ def test_execute_day_with_greedy_agent(game_engine, data_loader, greedy_agent):
     assert last_day.popularity_end == game_engine.game_state.popularity_score
     assert last_day.demand_tier == game_engine.game_state.current_demand_tier.value
     assert isinstance(last_day.popularity_delta, int)
+    assert last_day.penalties >= 0
 
     # Moving to next day should increment counter and clear routes.
     current_day = game_engine.game_state.current_day

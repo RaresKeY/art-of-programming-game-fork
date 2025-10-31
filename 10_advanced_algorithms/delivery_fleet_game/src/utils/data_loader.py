@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Dict, List
 from ..models import (
     VehicleType, Vehicle, Package, DeliveryMap,
-    Location, GameState
+    Location, GameState, DayHistory
 )
+from ..core.difficulty import DemandTier
 
 
 class DataLoader:
@@ -200,10 +201,31 @@ class DataLoader:
         game_state.popularity_score = data.get('popularity', game_state.popularity_score)
         game_state.last_popularity_delta = data.get('popularity_delta', 0)
         game_state.popularity_history = [game_state.popularity_score]
+        game_state.missed_delivery_penalty_rate = data.get('penalty_rate', game_state.missed_delivery_penalty_rate)
 
         if 'popularity_history' in data and isinstance(data['popularity_history'], list):
             game_state.popularity_history = data['popularity_history'][-20:]  # keep recent slice
             game_state.popularity_score = game_state.popularity_history[-1]
+
+        for record in data.get('history', []):
+            history_entry = DayHistory(
+                day=record['day'],
+                packages_delivered=record['packages_delivered'],
+                packages_attempted=record['packages_attempted'],
+                revenue=record['revenue'],
+                costs=record['costs'],
+                profit=record['profit'],
+                agent_used=record.get('agent_used', 'Manual'),
+                routes_count=record.get('routes_count', 0),
+                total_distance=record.get('total_distance', 0.0),
+                balance_end=record.get('balance_end', game_state.balance),
+                popularity_start=record.get('popularity_start', game_state.popularity_score),
+                popularity_end=record.get('popularity_end', game_state.popularity_score),
+                popularity_delta=record.get('popularity_delta', 0),
+                demand_tier=record.get('demand_tier', DemandTier.CALM.value),
+                penalties=record.get('penalties', 0.0),
+            )
+            game_state.history.append(history_entry)
 
 
         # Load fleet
@@ -239,6 +261,7 @@ class DataLoader:
             "popularity_delta": game_state.last_popularity_delta,
             "popularity_history": game_state.popularity_history[-50:],
             "demand_tier": game_state.current_demand_tier.value,
+            "penalty_rate": game_state.missed_delivery_penalty_rate,
             "fleet": [
                 {
                     "id": v.id,
@@ -265,6 +288,7 @@ class DataLoader:
                     "popularity_end": h.popularity_end,
                     "popularity_delta": h.popularity_delta,
                     "demand_tier": h.demand_tier,
+                    "penalties": getattr(h, 'penalties', 0.0),
                 }
                 for h in game_state.history
             ]

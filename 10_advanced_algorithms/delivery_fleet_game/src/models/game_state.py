@@ -50,6 +50,7 @@ class DayHistory:
     popularity_end: int = 0
     popularity_delta: int = 0
     demand_tier: str = DemandTier.CALM.value
+    penalties: float = 0.0
 
     @property
     def delivery_rate(self) -> float:
@@ -104,6 +105,7 @@ class GameState:
         self.current_demand_tier: DemandTier = DemandTier.CALM
         self.last_difficulty_snapshot: Optional[DifficultySnapshot] = None
         self.reward_multiplier: float = 1.0
+        self.missed_delivery_penalty_rate: float = 0.4  # Percentage of payment refunded for failed deliveries
 
     def add_vehicle(self, vehicle: Vehicle) -> None:
         """
@@ -230,20 +232,26 @@ class GameState:
         rush_attempts = sum(1 for pkg in self.packages_pending if pkg.is_rush)
         self.packages_delivered.extend(delivered_packages)
 
-        # Remove delivered packages from pending
         delivered_ids = {pkg.id for pkg in delivered_packages}
-        self.packages_pending = [pkg for pkg in self.packages_pending
-                                if pkg.id not in delivered_ids]
+        undelivered_packages = [pkg for pkg in self.packages_pending if pkg.id not in delivered_ids]
+        self.packages_pending = undelivered_packages
 
         # Update balance
         self.balance += total_profit
 
         delivered_count = len(delivered_packages)
         delivered_ratio = delivered_count / packages_attempted if packages_attempted > 0 else 1.0
-        undelivered_count = max(0, packages_attempted - delivered_count)
+        undelivered_count = len(undelivered_packages)
         delivered_rush = sum(1 for pkg in delivered_packages if pkg.is_rush)
-        rush_failures = max(0, rush_attempts - delivered_rush)
+        rush_failures = sum(1 for pkg in undelivered_packages if pkg.is_rush)
         penalty_units = undelivered_count + rush_failures * 2
+
+        penalty_amount = 0.0
+        if undelivered_packages:
+            penalty_amount = sum(pkg.payment * self.missed_delivery_penalty_rate for pkg in undelivered_packages)
+            self.balance -= penalty_amount
+            total_cost += penalty_amount
+            total_profit = total_revenue - total_cost
 
         popularity_before = self.popularity_score
         self._update_popularity(delivered_ratio, total_profit, penalty_units)
@@ -267,6 +275,7 @@ class GameState:
             popularity_end=popularity_after,
             popularity_delta=popularity_delta,
             demand_tier=snapshot.demand_tier.value,
+            penalties=penalty_amount,
         )
         self.history.append(day_record)
 
