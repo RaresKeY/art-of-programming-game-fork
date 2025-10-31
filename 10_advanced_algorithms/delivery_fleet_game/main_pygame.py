@@ -664,8 +664,8 @@ class DeliveryFleetApp:
         buttons = [
             Button(modal_btn_x, modal_btn_y, modal_btn_width, 40, "Buy Vehicle",
                    lambda: self.close_modal_and_buy()),
-            Button(modal_btn_x + 220, modal_btn_y, modal_btn_width, 40, "Skip Day",
-                   lambda: self.close_modal_and_skip()),
+            Button(modal_btn_x + 220, modal_btn_y, modal_btn_width, 40, "Continue",
+                   lambda: self.close_modal_and_continue()),
         ]
 
         self.capacity_warning_modal.show(content, buttons)
@@ -675,10 +675,15 @@ class DeliveryFleetApp:
         self.capacity_warning_modal.hide()
         self.on_buy_vehicle()
 
-    def close_modal_and_skip(self):
-        """Close modal and advance day."""
+    def close_modal_and_continue(self):
+        """Close modal and allow player to proceed with current day."""
         self.capacity_warning_modal.hide()
-        self.on_next_day()
+        self.show_warning(
+            "Continuing with limited capacity – undelivered orders incur penalties.",
+            Colors.PROFIT_NEGATIVE,
+        )
+        if self.mode == "MANUAL":
+            self.buttons['execute'].enabled = True
 
     def on_buy_vehicle(self):
         """Show vehicle purchase modal."""
@@ -799,10 +804,13 @@ class DeliveryFleetApp:
                 f"Popularity {last_day.popularity_end} ({last_day.popularity_delta:+}) | "
                 f"Demand {last_day.demand_tier}"
             )
+            penalties = getattr(last_day, 'penalties', 0.0)
             if last_day.popularity_delta < 0:
                 message += " – Reputation slipped, stabilize deliveries!"
             elif last_day.popularity_delta > 10:
                 message += " – Demand is surging, prepare your fleet!"
+            if penalties > 0:
+                message += f" | Penalty -${penalties:,.0f}"
             self.show_warning(message, severity_color)
 
         self.update_stats()
