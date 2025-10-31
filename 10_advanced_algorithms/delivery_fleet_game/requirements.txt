@@ -6,11 +6,11 @@
 # Python standard library is sufficient
 
 # Phase 3 - GUI version (ACTIVE)
-pygame>=2.5.0  # For graphical interface and visualization
-pillow
+pygame>=2.6.0  # For graphical interface and visualization
+pillow>=10.0.0
 
-# Development dependencies (optional)
-# pytest>=7.4.0  # For unit testing
+# Development dependencies (optional but recommended for contributors)
+pytest>=8.4.0  # For unit testing
 # pytest-cov>=4.1.0  # For test coverage
 # mypy>=1.5.0  # For type checking
 # black>=23.7.0  # For code formatting
