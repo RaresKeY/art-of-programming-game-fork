@@ -224,7 +224,7 @@ class DeliveryFleetApp:
         self.controls_panel = Panel(SIDEBAR_X + 10, SIDEBAR_START + 545, SIDEBAR_WIDTH - 20, 320, "CONTROLS")  # Adjusted position
 
         # Warning message area - positioned below controls panel
-        self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 805, SIDEBAR_WIDTH - 20, 80)
+        self.warning_rect = pygame.Rect(SIDEBAR_X + 10, SIDEBAR_START + 845, SIDEBAR_WIDTH - 20, 80)
 
         # Stats - Organized in clear rows
         stat_x = SIDEBAR_X + 25
@@ -293,7 +293,9 @@ class DeliveryFleetApp:
             'speed1': Button(btn_x, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "1x", lambda: self.set_autoplay_speed(1)),
             'speed2': Button(btn_x + speed_btn_width + 10, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "2x", lambda: self.set_autoplay_speed(2)),
             'speed3': Button(btn_x + (speed_btn_width + 10) * 2, btn_y + btn_spacing * 3, speed_btn_width, btn_height, "3x", lambda: self.set_autoplay_speed(3)),
-            'marketing': Button(btn_x, btn_y + btn_spacing * 4, btn_width, btn_height, "Marketing", self.on_show_marketing),
+            'save': Button(btn_x, btn_y + btn_spacing * 4, btn_small_width, btn_height, "Save", self.on_save),
+            'load': Button(btn_x + btn_small_width + 10, btn_y + btn_spacing * 4, btn_small_width, btn_height, "Load", self.on_load),
+            'marketing': Button(btn_x, btn_y + btn_spacing * 5, btn_width, btn_height, "Marketing", self.on_show_marketing),
         }
 
         # Set initial states
