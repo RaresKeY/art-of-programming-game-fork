@@ -6,7 +6,7 @@ Implements intelligent difficulty scaling and geographic clustering.
 """
 
 import random
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from ..models.package import Package
 from ..models.map import DeliveryMap
 
@@ -47,7 +47,7 @@ class PackageGenerator:
         target_volume: float,
         day: int,
         marketing_level: int = 1,
-        modifiers: Dict[str, float] | None = None,
+        modifiers: Optional[Dict[str, float]] = None,
     ) -> List[Package]:
         """
         Generate packages with intelligent difficulty scaling.
