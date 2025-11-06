@@ -320,6 +320,7 @@ class ManualModeManager:
         self.selected_vehicle: Optional[VehicleCard] = None
         self.selected_package: Optional[PackageCard] = None
         self.close_btn = None
+        self.plan_btn = None
         self.map_section_rect: Optional[pygame.Rect] = None
         self._map_inner_rect: Optional[pygame.Rect] = None
         self._map_scale: float = 1.0
@@ -462,9 +463,15 @@ class ManualModeManager:
         self.veh_prev_btn = Button(veh_btn_x, btn_y, btn_w, btn_h, "< Prev", self.prev_vehicle_page)
         self.veh_next_btn = Button(veh_btn_x + btn_w + 5, btn_y, btn_w, btn_h, "Next >", self.next_vehicle_page)
 
+        # Plan button to finalize manual layout
+        plan_btn_width = btn_w + 30
+        plan_btn_x = self.rect.right - plan_btn_width - 12
+        self.plan_btn = Button(plan_btn_x, btn_y, plan_btn_width, btn_h, "Plan")
+
         # Build current pages
         self._build_package_page()
         self._build_vehicle_page(delivery_map=self.delivery_map)
+        self._update_action_buttons()
 
     def _configure_map_projection(self):
         """Prepare mini-map projection values based on current layout."""
@@ -491,6 +498,12 @@ class ManualModeManager:
         pad_y = (draw_height - map_height * scale) / 2
         self._map_pad_x = pad_x
         self._map_pad_y = pad_y
+        self._update_action_buttons()
+
+    def _update_action_buttons(self):
+        """Enable/disable action buttons based on current assignments."""
+        if self.plan_btn:
+            self.plan_btn.enabled = bool(self.assignments)
 
     def _map_world_to_screen(self, point: Tuple[float, float]) -> Optional[Tuple[int, int]]:
         """Convert map coordinates to mini-map screen coordinates."""
@@ -732,6 +745,7 @@ class ManualModeManager:
 
                 # Rebuild package page to show assignment
                 self._build_package_page()
+                self._update_action_buttons()
 
                 return True
             else:
@@ -766,6 +780,12 @@ class ManualModeManager:
 
         if self.close_btn and self.close_btn.handle_event(event):
             result['action'] = 'close'
+            return result
+
+        if self.plan_btn and self.plan_btn.handle_event(event):
+            routes = self.get_manual_routes(delivery_map)
+            result['action'] = 'plan_routes'
+            result['data'] = routes
             return result
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -913,6 +933,7 @@ class ManualModeManager:
             # Update package cards to show assignment
             self._build_package_page()
             self.selected_package = None
+            self._update_action_buttons()
 
             return True
 
@@ -1068,6 +1089,8 @@ class ManualModeManager:
             self.veh_prev_btn.render(surface)
         if self.veh_next_btn:
             self.veh_next_btn.render(surface)
+        if self.plan_btn:
+            self.plan_btn.render(surface)
 
         # Render scroll indicators
         if self.max_content_scroll > 0:

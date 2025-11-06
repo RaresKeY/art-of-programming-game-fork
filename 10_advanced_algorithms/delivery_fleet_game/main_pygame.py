@@ -11,13 +11,14 @@ Usage:
 import sys
 import pygame
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.core import GameEngine
 from src.agents import GreedyAgent, BacktrackingAgent, PruningBacktrackingAgent, StudentAgent
+from src.models import Route
 from src.ui.constants import *
 from src.ui.map_renderer import MapRenderer
 from src.ui.components import Button, Panel, CollapsiblePanel, StatDisplay, RadioButton, Tooltip
@@ -241,7 +242,7 @@ class DeliveryFleetApp:
         # Panels - Carefully calculated to prevent overlaps
         self.stats_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 200, "GAME STATUS")
         self.mode_panel = Panel(left_panel_x, SIDEBAR_START, left_panel_width, 85, "MODE")
-        self.agent_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 180, "AGENTS")
+        self.agent_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 250, "AGENTS")
         self.custom_agent_panel = CollapsiblePanel(right_panel_x, SIDEBAR_START, right_panel_width, 120, "CUSTOM AGENTS")
         self.controls_panel = Panel(right_panel_x, SIDEBAR_START, right_panel_width, 330, "CONTROLS")
 
@@ -297,6 +298,8 @@ class DeliveryFleetApp:
             RadioButton(self.agent_radio_x, radio_y + 35, "Greedy+2opt", "agent", "greedy_2opt"),
             RadioButton(self.agent_radio_x, radio_y + 70, "Backtrack", "agent", "backtracking"),
             RadioButton(self.agent_radio_x, radio_y + 105, "Pruning BT", "agent", "pruning_backtracking"),
+            RadioButton(self.agent_radio_x, radio_y + 140, "Student Sweep", "agent", "student"),
+            RadioButton(self.agent_radio_x, radio_y + 175, "Student Sweep+2opt", "agent", "student_2opt"),
         ]
         self.agent_radios[0].selected = True
 
@@ -357,8 +360,16 @@ class DeliveryFleetApp:
         self.buttons['next_day'].enabled = False
         self._refresh_speed_buttons()
         self._reflow_sidebar_layout()
+        self._set_mode_button_state(self.mode == "MANUAL")
 
     # ==================== EVENT HANDLERS ====================
+
+    def _set_mode_button_state(self, manual_active: bool) -> None:
+        """Visually indicate which mode is active."""
+        if hasattr(self, 'mode_manual_btn'):
+            self.mode_manual_btn.pressed = manual_active
+        if hasattr(self, 'mode_auto_btn'):
+            self.mode_auto_btn.pressed = not manual_active
 
     def _panel_effective_height(self, panel: Panel) -> int:
         if isinstance(panel, CollapsiblePanel):
@@ -733,6 +744,7 @@ class DeliveryFleetApp:
     def on_mode_auto(self):
         """Switch to AUTO mode."""
         self.mode = "AUTO"
+        self._set_mode_button_state(False)
         self.show_warning("AUTO mode: algorithms will plan routes", Colors.TEXT_ACCENT)
         if self.manual_mode_manager:
             self.manual_mode_manager.active = False
@@ -742,6 +754,7 @@ class DeliveryFleetApp:
     def on_mode_manual(self):
         """Switch to MANUAL mode."""
         self.mode = "MANUAL"
+        self._set_mode_button_state(True)
         self.show_warning("MANUAL mode: Drag packages and build routes yourself!", Colors.TEXT_ACCENT)
 
         # Initialize manual mode manager if needed
@@ -983,6 +996,26 @@ class DeliveryFleetApp:
                 self.auto_plan_routes(show_feedback=False)
         else:
             self.show_warning("Not enough funds!", Colors.PROFIT_NEGATIVE)
+
+    def _apply_manual_plan(self, routes: List[Route]) -> None:
+        """Apply manual routes as the current plan."""
+        if not routes:
+            self.show_warning("No routes built! Assign packages before planning.", Colors.PROFIT_NEGATIVE)
+            return
+
+        self.mode = "MANUAL"
+        self._set_mode_button_state(True)
+        self.planned_routes = list(routes)
+        self.render_routes = list(routes)
+        self.planned_metrics = calculate_route_metrics(routes)
+        self.engine.game_state.set_routes(routes)
+        self.buttons['execute'].enabled = True
+        self.buttons['next_day'].enabled = False
+        self._update_planned_metrics_display()
+
+        profit = self.planned_metrics.get('total_profit', 0.0)
+        color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
+        self.show_warning(f"Manual plan ready! Profit ${profit:,.0f}. Execute when ready.", color)
 
     def on_execute_day(self):
         """Execute the planned routes or manual plan."""
@@ -1442,6 +1475,15 @@ class DeliveryFleetApp:
                             self.show_warning(f"{pkg_id[-4:]} ready for {veh.id[-3:]} - press Assign", Colors.TEXT_ACCENT)
                         else:
                             self.show_warning(f"Selected package {pkg_id[-4:]} - choose a vehicle", Colors.TEXT_ACCENT)
+
+                elif result['action'] == 'plan_routes':
+                    routes = result.get('data') or []
+                    if routes:
+                        self.manual_mode_manager.active = False
+                        self._apply_manual_plan(routes)
+                    else:
+                        self.show_warning("Assign packages before planning!", Colors.PROFIT_NEGATIVE)
+                    continue
 
                 elif result['action'] == 'close':
                     self.on_mode_auto()
