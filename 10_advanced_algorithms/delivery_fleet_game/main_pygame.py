@@ -691,31 +691,23 @@ class DeliveryFleetApp:
 
     def _get_manual_mode_rect(self) -> tuple[int, int, int, int]:
         """Calculate the manual mode popup dimensions."""
-        margin = 30
-        min_width = 600
-        min_height = 360
+        margin = 20
+        width = max(600, WINDOW_WIDTH - margin * 2)
+        height = max(360, WINDOW_HEIGHT - margin * 2)
 
-        manual_x = MAP_X + MAP_WIDTH + margin
-        manual_y = max(MAP_Y, margin)
+        if width >= WINDOW_WIDTH:
+            width = WINDOW_WIDTH - margin
+            margin_x = (WINDOW_WIDTH - width) // 2
+        else:
+            margin_x = margin
 
-        available_width = WINDOW_WIDTH - manual_x - margin
-        if available_width < min_width:
-            manual_x = margin
-            available_width = WINDOW_WIDTH - (2 * margin)
+        if height >= WINDOW_HEIGHT:
+            height = WINDOW_HEIGHT - margin
+            margin_y = (WINDOW_HEIGHT - height) // 2
+        else:
+            margin_y = margin
 
-        width = max(min_width, min(available_width, WINDOW_WIDTH - (2 * margin)))
-        if available_width <= 0:
-            width = WINDOW_WIDTH - (2 * margin)
-            manual_x = margin
-
-        available_height = WINDOW_HEIGHT - manual_y - margin
-        if available_height < min_height:
-            manual_y = margin
-            available_height = WINDOW_HEIGHT - (2 * margin)
-
-        height = max(min_height, min(available_height, WINDOW_HEIGHT - (2 * margin)))
-
-        return manual_x, manual_y, int(width), int(height)
+        return margin_x, margin_y, int(width), int(height)
 
     def process_autoplay(self, dt: float):
         if not self.autoplay_enabled:
@@ -763,9 +755,9 @@ class DeliveryFleetApp:
         if self.engine.game_state:
             packages = self.engine.game_state.packages_pending or []
             fleet = self.engine.game_state.fleet or []
-            self.manual_mode_manager.setup(packages, fleet)
+            self.manual_mode_manager.setup(packages, fleet, self.engine.delivery_map)
         else:
-            self.manual_mode_manager.setup([], [])
+            self.manual_mode_manager.setup([], [], self.engine.delivery_map)
 
         self.manual_mode_manager.active = True
         self.buttons['execute'].enabled = True
@@ -1441,29 +1433,19 @@ class DeliveryFleetApp:
                     if result['data']:
                         self.show_warning(f"Selected {result['data'].vehicle.id} - Click packages on map", Colors.TEXT_ACCENT)
 
+                elif result['action'] == 'package_selected':
+                    card = result['data']
+                    if card:
+                        pkg_id = card.package.id
+                        if self.manual_mode_manager.selected_vehicle:
+                            veh = self.manual_mode_manager.selected_vehicle.vehicle
+                            self.show_warning(f"{pkg_id[-4:]} ready for {veh.id[-3:]} - press Assign", Colors.TEXT_ACCENT)
+                        else:
+                            self.show_warning(f"Selected package {pkg_id[-4:]} - choose a vehicle", Colors.TEXT_ACCENT)
+
                 elif result['action'] == 'close':
                     self.on_mode_auto()
                     continue
-
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    map_rect = pygame.Rect(MAP_X, MAP_Y, MAP_WIDTH, MAP_HEIGHT)
-                    if map_rect.collidepoint(event.pos) and self.engine.game_state and self.engine.game_state.packages_pending:
-                        mouse_x = event.pos[0] - MAP_X
-                        mouse_y = event.pos[1] - MAP_Y
-
-                        for pkg in self.engine.game_state.packages_pending:
-                            pkg_screen_x, pkg_screen_y = self.map_renderer.world_to_screen(pkg.destination)
-                            distance = ((mouse_x - pkg_screen_x) ** 2 + (mouse_y - pkg_screen_y) ** 2) ** 0.5
-                            if distance < 15:
-                                if self.manual_mode_manager.assign_package_from_map(pkg, self.engine.delivery_map):
-                                    veh_id = self.manual_mode_manager.selected_vehicle.vehicle.id if self.manual_mode_manager.selected_vehicle else "vehicle"
-                                    self.show_warning(f"Assigned {pkg.id[-4:]} to {veh_id[-3:]}", Colors.PROFIT_POSITIVE)
-                                else:
-                                    if pkg.id in self.manual_mode_manager.assignments:
-                                        self.show_warning(f"{pkg.id[-4:]} already assigned", Colors.TEXT_SECONDARY)
-                                    else:
-                                        self.show_warning("Select a vehicle first or capacity exceeded", Colors.PROFIT_NEGATIVE)
-                                break
 
                 if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.MOUSEWHEEL):
                     continue
