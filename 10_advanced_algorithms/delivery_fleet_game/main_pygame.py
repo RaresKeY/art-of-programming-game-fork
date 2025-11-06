@@ -241,7 +241,7 @@ class DeliveryFleetApp:
 
         # Panels - Carefully calculated to prevent overlaps
         self.stats_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 200, "GAME STATUS")
-        self.mode_panel = Panel(left_panel_x, SIDEBAR_START, left_panel_width, 85, "MODE")
+        self.mode_panel = Panel(left_panel_x, SIDEBAR_START, left_panel_width, 150, "MODE")
         self.agent_panel = CollapsiblePanel(left_panel_x, SIDEBAR_START, left_panel_width, 250, "AGENTS")
         self.custom_agent_panel = CollapsiblePanel(right_panel_x, SIDEBAR_START, right_panel_width, 120, "CUSTOM AGENTS")
         self.controls_panel = Panel(right_panel_x, SIDEBAR_START, right_panel_width, 330, "CONTROLS")
@@ -287,6 +287,14 @@ class DeliveryFleetApp:
             'mode_manual': (self.mode_manual_btn.rect.x - self.mode_panel.rect.x,
                             self.mode_manual_btn.rect.y - self.mode_panel.rect.y)
         }
+
+        self.mode_preview_font = pygame.font.SysFont('arial', 14)
+        self.auto_revenue_preview = "—"
+        self.manual_revenue_preview = "—"
+        self.auto_revenue_color = Colors.TEXT_SECONDARY
+        self.manual_revenue_color = Colors.TEXT_SECONDARY
+        self._set_auto_preview(None)
+        self._set_manual_preview(None)
 
         # Agent radio buttons - positioned in AGENTS panel
         self.agent_list_top_offset = self.agent_panel.header_height + 10
@@ -370,6 +378,26 @@ class DeliveryFleetApp:
             self.mode_manual_btn.pressed = manual_active
         if hasattr(self, 'mode_auto_btn'):
             self.mode_auto_btn.pressed = not manual_active
+
+    def _set_auto_preview(self, metrics: Optional[dict]) -> None:
+        """Update the automatic planning revenue preview text."""
+        if metrics and metrics.get('total_revenue') is not None:
+            revenue = metrics['total_revenue']
+            self.auto_revenue_preview = f"${revenue:,.0f}"
+            self.auto_revenue_color = Colors.PROFIT_POSITIVE if revenue >= 0 else Colors.PROFIT_NEGATIVE
+        else:
+            self.auto_revenue_preview = "—"
+            self.auto_revenue_color = Colors.TEXT_SECONDARY
+
+    def _set_manual_preview(self, metrics: Optional[dict]) -> None:
+        """Update the manual planning revenue preview text."""
+        if metrics and metrics.get('total_revenue') is not None:
+            revenue = metrics['total_revenue']
+            self.manual_revenue_preview = f"${revenue:,.0f}"
+            self.manual_revenue_color = Colors.PROFIT_POSITIVE if revenue >= 0 else Colors.PROFIT_NEGATIVE
+        else:
+            self.manual_revenue_preview = "—"
+            self.manual_revenue_color = Colors.TEXT_SECONDARY
 
     def _panel_effective_height(self, panel: Panel) -> int:
         if isinstance(panel, CollapsiblePanel):
@@ -481,6 +509,8 @@ class DeliveryFleetApp:
 
         self.render_routes = []
         self.auto_plan_deferred = False
+        self._set_auto_preview(None)
+        self._set_manual_preview(None)
 
         if not self.engine.game_state.packages_pending:
             self.show_warning("No packages for this day!", Colors.TEXT_ACCENT)
@@ -551,6 +581,8 @@ class DeliveryFleetApp:
         state = self.engine.game_state
         all_radios = self.agent_radios + self.custom_agent_radios
         if not state or not state.packages_pending:
+            self._set_auto_preview(None)
+            self.agent_metrics_preview = {}
             for radio in all_radios:
                 if radio.value in self.disabled_agents:
                     radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
@@ -570,6 +602,7 @@ class DeliveryFleetApp:
                 previews[radio.value] = metrics
 
         self.agent_metrics_preview = previews
+        self._set_auto_preview(previews.get(self.selected_agent))
 
         for radio in all_radios:
             if radio.value in self.disabled_agents:
@@ -612,6 +645,7 @@ class DeliveryFleetApp:
             self.engine.apply_agent_solution(agent_name)
             self.buttons['execute'].enabled = True
             self._update_planned_metrics_display()
+            self._set_auto_preview(metrics)
 
             profit = metrics['total_profit']
             color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
@@ -624,6 +658,7 @@ class DeliveryFleetApp:
             self.buttons['execute'].enabled = False
             self.render_routes = []
             self._update_planned_metrics_display()
+            self._set_auto_preview(None)
             if show_feedback:
                 self.show_warning("No valid routes found!", Colors.PROFIT_NEGATIVE)
 
@@ -745,6 +780,7 @@ class DeliveryFleetApp:
         """Switch to AUTO mode."""
         self.mode = "AUTO"
         self._set_mode_button_state(False)
+        self._set_manual_preview(None)
         self.show_warning("AUTO mode: algorithms will plan routes", Colors.TEXT_ACCENT)
         if self.manual_mode_manager:
             self.manual_mode_manager.active = False
@@ -755,6 +791,8 @@ class DeliveryFleetApp:
         """Switch to MANUAL mode."""
         self.mode = "MANUAL"
         self._set_mode_button_state(True)
+        if not self.planned_routes:
+            self._set_manual_preview(None)
         self.show_warning("MANUAL mode: Drag packages and build routes yourself!", Colors.TEXT_ACCENT)
 
         # Initialize manual mode manager if needed
@@ -1012,6 +1050,7 @@ class DeliveryFleetApp:
         self.buttons['execute'].enabled = True
         self.buttons['next_day'].enabled = False
         self._update_planned_metrics_display()
+        self._set_manual_preview(self.planned_metrics)
 
         profit = self.planned_metrics.get('total_profit', 0.0)
         color = Colors.PROFIT_POSITIVE if profit >= 0 else Colors.PROFIT_NEGATIVE
@@ -1047,6 +1086,8 @@ class DeliveryFleetApp:
         self.planned_routes = []
         self.planned_metrics = None
         self.engine.game_state.set_routes([])
+        self._set_manual_preview(None)
+        self._set_auto_preview(None)
 
         self.buttons['execute'].enabled = False
         self.buttons['next_day'].enabled = True
@@ -1520,6 +1561,7 @@ class DeliveryFleetApp:
                                 if other is not radio:
                                     other.selected = False
                             self.selected_agent = radio.value
+                            self._set_auto_preview(self.agent_metrics_preview.get(self.selected_agent))
                             if self.mode == "AUTO":
                                 self.auto_plan_routes(show_feedback=True)
                             break
@@ -1530,6 +1572,7 @@ class DeliveryFleetApp:
                                 if other is not radio:
                                     other.selected = False
                             self.selected_agent = radio.value
+                            self._set_auto_preview(self.agent_metrics_preview.get(self.selected_agent))
                             if self.mode == "AUTO":
                                 self.auto_plan_routes(show_feedback=True)
                             break
@@ -1791,6 +1834,15 @@ class DeliveryFleetApp:
                     self.mode_manual_btn.rect.height + 4
                 )
             pygame.draw.rect(self.screen, Colors.TEXT_ACCENT, highlight_rect, 3, border_radius=7)
+
+            auto_surface = self.mode_preview_font.render(self.auto_revenue_preview, True, self.auto_revenue_color)
+            manual_surface = self.mode_preview_font.render(self.manual_revenue_preview, True, self.manual_revenue_color)
+            auto_x = self.mode_auto_btn.rect.centerx - auto_surface.get_width() // 2
+            auto_y = self.mode_auto_btn.rect.bottom + 6
+            manual_x = self.mode_manual_btn.rect.centerx - manual_surface.get_width() // 2
+            manual_y = self.mode_manual_btn.rect.bottom + 6
+            self.screen.blit(auto_surface, (auto_x, auto_y))
+            self.screen.blit(manual_surface, (manual_x, manual_y))
 
         # Standard agent radios
         if not self.agent_panel.collapsed:
