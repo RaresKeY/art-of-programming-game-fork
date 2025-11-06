@@ -9,6 +9,7 @@ This module provides interactive UI components that allow users to:
 """
 
 import pygame
+import math
 from typing import List, Optional, Tuple, Dict
 from ..models import Package, Vehicle, Route
 from ..models.map import DeliveryMap
@@ -81,35 +82,51 @@ class PackageCard:
 
         pygame.draw.rect(surface, border_color, self.rect, border_width, border_radius=4)
 
-        # Text - very compact
-        font_id = pygame.font.SysFont('arial', 12, bold=True)
-        font_info = pygame.font.SysFont('arial', 10)
+        # Text - use larger fonts and sequential layout
+        title_font = pygame.font.SysFont('arial', 32, bold=True)
+        value_font = pygame.font.SysFont('arial', 26)
+        badge_font = pygame.font.SysFont('arial', 22, bold=True)
+
+        padding = 10
+        content_left = self.rect.x + padding
+        content_right = self.rect.right - padding
+        line_y = self.rect.y + padding
 
         # ID (shortened)
-        id_text = font_id.render(self.package.id[-4:], True, Colors.TEXT_PRIMARY)
-        surface.blit(id_text, (self.rect.x + 5, self.rect.y + 4))
+        id_text = title_font.render(self.package.id[-4:], True, Colors.TEXT_PRIMARY)
+        surface.blit(id_text, (content_left, line_y))
+        line_y += id_text.get_height() + 6
 
-        # Volume
-        vol_text = font_info.render(f"{self.package.volume_m3:.1f}m³", True, Colors.TEXT_SECONDARY)
-        surface.blit(vol_text, (self.rect.x + 5, self.rect.y + 18))
+        # Volume and price on the same row
+        volume_text = value_font.render(f"{self.package.volume_m3:.1f} m³", True, Colors.TEXT_SECONDARY)
+        surface.blit(volume_text, (content_left, line_y))
 
-        # Price
-        price_text = font_info.render(f"${self.package.payment:.0f}", True, Colors.PROFIT_POSITIVE)
-        surface.blit(price_text, (self.rect.x + 5, self.rect.y + 30))
+        price_text = value_font.render(f"${self.package.payment:.0f}", True, Colors.PROFIT_POSITIVE)
+        surface.blit(price_text, (content_right - price_text.get_width(), line_y))
+        line_y += value_font.get_height() + 6
 
-        # Priority badge
+        # Priority / rush badges
+        badge_x = content_left
+        badges_rendered = False
         if self.package.priority >= 3:
-            badge_text = font_info.render(f"P{self.package.priority}", True, Colors.TEXT_ACCENT)
-            surface.blit(badge_text, (self.rect.x + 5, self.rect.y + 42))
+            priority_text = badge_font.render(f"P{self.package.priority}", True, Colors.TEXT_ACCENT)
+            surface.blit(priority_text, (badge_x, line_y))
+            badge_x += priority_text.get_width() + 12
+            badges_rendered = True
 
         if getattr(self.package, 'is_rush', False):
-            rush_text = font_info.render("RUSH", True, Colors.PROFIT_NEGATIVE)
-            surface.blit(rush_text, (self.rect.x + 50, self.rect.y + 42))
+            rush_text = badge_font.render("RUSH", True, Colors.PROFIT_NEGATIVE)
+            surface.blit(rush_text, (badge_x, line_y))
+            badge_x += rush_text.get_width() + 12
+            badges_rendered = True
+
+        if badges_rendered:
+            line_y += badge_font.get_height() + 4
 
         # Assigned indicator
         if self.assigned_vehicle_id:
-            assigned_text = font_info.render(f"→V{self.assigned_vehicle_id[-2:]}", True, Colors.TEXT_ACCENT)
-            surface.blit(assigned_text, (self.rect.x + 5, self.rect.y + 54))
+            assigned_text = badge_font.render(f"Assigned → {self.assigned_vehicle_id[-4:]}", True, Colors.TEXT_ACCENT)
+            surface.blit(assigned_text, (content_left, line_y))
 
 
 class VehicleCard:
@@ -247,8 +264,8 @@ class VehicleCard:
         pygame.draw.rect(surface, border_color, self.rect, border_width, border_radius=4)
 
         # Fonts
-        font_header = pygame.font.SysFont('arial', 12, bold=True)
-        font_info = pygame.font.SysFont('arial', 10)
+        font_header = pygame.font.SysFont('arial', 16, bold=True)
+        font_info = pygame.font.SysFont('arial', 13)
 
         # Line 1: Vehicle name and ID
         name = self.vehicle.vehicle_type.name[:10]  # Max 10 chars
@@ -321,6 +338,7 @@ class ManualModeManager:
         self.selected_package: Optional[PackageCard] = None
         self.close_btn = None
         self.plan_btn = None
+        self.reset_btn = None
         self.map_section_rect: Optional[pygame.Rect] = None
         self._map_inner_rect: Optional[pygame.Rect] = None
         self._map_scale: float = 1.0
@@ -328,6 +346,15 @@ class ManualModeManager:
         self._map_pad_y: float = 0.0
         self._map_package_positions: Dict[str, Tuple[int, int]] = {}
         self.delivery_map: Optional[DeliveryMap] = None
+        self.summary_rect: Optional[pygame.Rect] = None
+        self.summary_title_font = pygame.font.SysFont('arial', 24, bold=True)
+        self.summary_primary_font = pygame.font.SysFont('arial', 18)
+        self.summary_secondary_font = pygame.font.SysFont('arial', 15)
+        self.section_header_font = pygame.font.SysFont('arial', 16, bold=True)
+        self.section_hint_font = pygame.font.SysFont('arial', 13)
+        self._package_lookup: Dict[str, Package] = {}
+        self.packages_header_height = 42
+        self.vehicles_header_height = 32
 
         # Pagination
         self.package_page = 0
@@ -374,99 +401,85 @@ class ManualModeManager:
         # Store all items
         self.all_packages = packages
         self.all_vehicles = vehicles
+        self._package_lookup = {pkg.id: pkg for pkg in packages}
         if delivery_map:
             self.delivery_map = delivery_map
 
-        # Reset pagination
+        # Reset pagination and selections
         self.package_page = 0
         self.vehicle_page = 0
         self.assignments.clear()
-
-        # Reset selections
         self.selected_package = None
         self.selected_vehicle = None
+        self.content_scroll_offset = 0
+        self.max_content_scroll = 0
 
-        # Define layout sections
-        header_height = 32
-        nav_button_height = 25
+        # Layout metrics
+        margin_x = 16
+        margin_y = 16
+        header_height = 52
+        nav_button_height = 28
+        summary_height = 96
+        column_gap = 14
+
         close_btn_width = 110
-        close_btn_height = 26
-        close_btn_x = int(self.rect.right - close_btn_width - 12)
-        close_btn_y = int(self.rect.y + 6)
+        close_btn_height = 28
+        close_btn_x = int(self.rect.right - close_btn_width - margin_x)
+        close_btn_y = int(self.rect.y + margin_y // 2)
         self.close_btn = Button(close_btn_x, close_btn_y, close_btn_width, close_btn_height, "Exit Manual")
 
-        # Content area metrics
-        top_margin = header_height + 10
-        bottom_margin = 10
-        btn_y = self.rect.y + self.rect.height - nav_button_height - bottom_margin
-        content_top = self.rect.y + top_margin
-        content_bottom = btn_y - 10
-        content_height = max(140, content_bottom - content_top)
+        content_left = self.rect.x + margin_x
+        content_width = self.rect.width - margin_x * 2
+        btn_y = self.rect.bottom - nav_button_height - margin_y
+        usable_height = self.rect.height - header_height - nav_button_height - margin_y * 2
+        summary_top = self.rect.y + header_height
+        self.summary_rect = pygame.Rect(content_left, summary_top, content_width, summary_height)
 
-        # Column widths (map | packages | vehicles)
-        left_margin = 10
-        right_margin = 10
-        column_gap = 10
-        usable_width = self.rect.width - left_margin - right_margin - 2 * column_gap
-        map_width = max(180, int(usable_width * 0.38))
-        packages_width = max(160, int(usable_width * 0.32))
-        vehicles_width = usable_width - map_width - packages_width
+        map_top = self.summary_rect.bottom + 12
+        map_height = max(260, usable_height - summary_height - 12)
+        map_width = int(content_width * 0.55)
+        info_width = content_width - map_width - column_gap
+        if info_width < 220:
+            info_width = 220
+            map_width = content_width - info_width - column_gap
 
-        if vehicles_width < 150:
-            deficit = 150 - vehicles_width
-            map_width = max(160, map_width - deficit // 2)
-            packages_width = max(150, packages_width - deficit // 2)
-            vehicles_width = usable_width - map_width - packages_width
-            vehicles_width = max(140, vehicles_width)
+        self.map_section_rect = pygame.Rect(content_left, map_top, map_width, map_height)
 
-        self.map_section_rect = pygame.Rect(
-            self.rect.x + left_margin,
-            content_top,
-            map_width,
-            content_height
-        )
+        info_x = self.map_section_rect.right + column_gap
+        info_height = map_height
+        vehicles_height = max(170, int(info_height * 0.42))
+        packages_height = info_height - vehicles_height - 14
+        if packages_height < 200:
+            packages_height = 200
+            vehicles_height = info_height - packages_height - 14
 
-        self.packages_section_rect = pygame.Rect(
-            self.map_section_rect.right + column_gap,
-            content_top,
-            packages_width,
-            content_height
-        )
+        self.packages_section_rect = pygame.Rect(info_x, map_top, info_width, packages_height)
+        self.vehicles_section_rect = pygame.Rect(info_x, self.packages_section_rect.bottom + 14, info_width, vehicles_height)
 
-        self.vehicles_section_rect = pygame.Rect(
-            self.packages_section_rect.right + column_gap,
-            content_top,
-            vehicles_width,
-            content_height
-        )
-
-        # Reset map helpers
-        self._configure_map_projection()
-
-        # Reset scroll
-        self.content_scroll_offset = 0
-        self.max_content_scroll = max(0, self.packages_section_rect.height - 260)
         self.base_packages_y = self.packages_section_rect.y
         self.base_vehicles_y = self.vehicles_section_rect.y
 
-        # Create navigation buttons for packages
-        btn_w = 70
-        btn_h = 22
-        pkg_btn_x = self.packages_section_rect.x
+        # Navigation and action buttons
+        btn_w = 82
+        btn_h = nav_button_height
+        nav_gap = 10
 
-        self.pkg_prev_btn = Button(pkg_btn_x, btn_y, btn_w, btn_h, "< Prev", self.prev_package_page)
-        self.pkg_next_btn = Button(pkg_btn_x + btn_w + 5, btn_y, btn_w, btn_h, "Next >", self.next_package_page)
-        self.assign_btn = Button(pkg_btn_x + 2 * btn_w + 20, btn_y, btn_w + 30, btn_h, "Assign")
+        self.pkg_prev_btn = Button(0, 0, btn_w, btn_h, "< Prev", self.prev_package_page)
+        self.pkg_next_btn = Button(0, 0, btn_w, btn_h, "Next >", self.next_package_page)
 
-        # Create navigation buttons for vehicles
-        veh_btn_x = self.vehicles_section_rect.x
-        self.veh_prev_btn = Button(veh_btn_x, btn_y, btn_w, btn_h, "< Prev", self.prev_vehicle_page)
-        self.veh_next_btn = Button(veh_btn_x + btn_w + 5, btn_y, btn_w, btn_h, "Next >", self.next_vehicle_page)
+        assign_width = 180
+        self.assign_btn = Button(info_x, btn_y, assign_width, btn_h, "Assign Package")
 
-        # Plan button to finalize manual layout
-        plan_btn_width = btn_w + 30
-        plan_btn_x = self.rect.right - plan_btn_width - 12
-        self.plan_btn = Button(plan_btn_x, btn_y, plan_btn_width, btn_h, "Plan")
+        self.veh_prev_btn = Button(0, 0, btn_w, btn_h, "< Prev", self.prev_vehicle_page)
+        self.veh_next_btn = Button(0, 0, btn_w, btn_h, "Next >", self.next_vehicle_page)
+
+        plan_width = 130
+        reset_width = 110
+        self.plan_btn = Button(self.rect.right - margin_x - plan_width, btn_y, plan_width, btn_h, "Plan Routes")
+        self.reset_btn = Button(self.plan_btn.rect.x - reset_width - nav_gap, btn_y, reset_width, btn_h, "Clear All")
+
+        # Configure map projection after layout
+        self._configure_map_projection()
 
         # Build current pages
         self._build_package_page()
@@ -500,10 +513,115 @@ class ManualModeManager:
         self._map_pad_y = pad_y
         self._update_action_buttons()
 
+    def _gather_summary_stats(self) -> Dict[str, float]:
+        """Compute aggregate statistics for summary display."""
+        total_packages = len(self.all_packages)
+        assigned_ids = set(self.assignments.keys())
+        assigned_packages = [self._package_lookup[pkg_id] for pkg_id in assigned_ids if pkg_id in self._package_lookup]
+
+        assigned_count = len(assigned_packages)
+        assigned_volume = sum(pkg.volume_m3 for pkg in assigned_packages)
+        assigned_revenue = sum(pkg.payment for pkg in assigned_packages)
+
+        return {
+            'total_packages': total_packages,
+            'assigned_count': assigned_count,
+            'assigned_volume': assigned_volume,
+            'assigned_revenue': assigned_revenue,
+        }
+
+    def _render_summary(self, surface: pygame.Surface):
+        """Render the summary panel at the top of manual mode."""
+        if not self.summary_rect:
+            return
+
+        pygame.draw.rect(surface, Colors.PANEL_BG, self.summary_rect, border_radius=8)
+        pygame.draw.rect(surface, Colors.BORDER_LIGHT, self.summary_rect, 1, border_radius=8)
+
+        stats = self._gather_summary_stats()
+        text_x = self.summary_rect.x + 14
+        line_y = self.summary_rect.y + 10
+
+        title = self.summary_title_font.render("Manual Planning", True, Colors.TEXT_ACCENT)
+        surface.blit(title, (text_x, line_y))
+        line_y += title.get_height() + 6
+
+        instruction = self.summary_primary_font.render(
+            "Choose a vehicle, then click packages from the list or map.", True, Colors.TEXT_PRIMARY
+        )
+        surface.blit(instruction, (text_x, line_y))
+        line_y += instruction.get_height() + 4
+
+        stats_text = self.summary_secondary_font.render(
+            f"Assigned {stats['assigned_count']}/{stats['total_packages']} packages • "
+            f"Volume {stats['assigned_volume']:.1f} m³ • Revenue ${stats['assigned_revenue']:,.0f}",
+            True,
+            Colors.TEXT_SECONDARY,
+        )
+        surface.blit(stats_text, (text_x, line_y))
+        line_y += stats_text.get_height() + 4
+
+        if self.selected_vehicle:
+            veh = self.selected_vehicle.vehicle
+            current_volume = self.selected_vehicle.get_current_volume()
+            capacity = veh.vehicle_type.capacity_m3
+            vehicle_line = self.summary_secondary_font.render(
+                f"Selected: {veh.vehicle_type.name} {veh.id[-3:]} "
+                f"({current_volume:.1f}/{capacity:.1f} m³) • Stops {len(self.selected_vehicle.route_stops)}",
+                True,
+                Colors.TEXT_PRIMARY,
+            )
+            surface.blit(vehicle_line, (text_x, line_y))
+        else:
+            hint = self.summary_secondary_font.render(
+                "Select a vehicle to begin assigning packages.", True, Colors.TEXT_SECONDARY
+            )
+            surface.blit(hint, (text_x, line_y))
+
+    def clear_assignments(self) -> bool:
+        """Clear all manual assignments."""
+        if not self.assignments:
+            return False
+
+        self.content_scroll_offset = 0
+
+        selected_id = self.selected_vehicle.vehicle.id if self.selected_vehicle else None
+
+        self.assignments.clear()
+        self.selected_package = None
+
+        # Reset package cards
+        for card in self.package_cards:
+            card.assigned_vehicle_id = None
+            card.selected = False
+
+        # Rebuild vehicle cards to clear metrics
+        self._build_vehicle_page(self.delivery_map)
+
+        # Restore vehicle selection if possible
+        if selected_id:
+            for card in self.vehicle_cards:
+                if card.vehicle.id == selected_id:
+                    card.selected = True
+                    self.selected_vehicle = card
+                    break
+            else:
+                self.selected_vehicle = None
+        else:
+            self.selected_vehicle = None
+
+        self._build_package_page()
+        self._update_action_buttons()
+        return True
+
     def _update_action_buttons(self):
         """Enable/disable action buttons based on current assignments."""
         if self.plan_btn:
             self.plan_btn.enabled = bool(self.assignments)
+        if self.reset_btn:
+            self.reset_btn.enabled = bool(self.assignments)
+        if self.assign_btn:
+            self.assign_btn.enabled = bool(self.selected_vehicle)
 
     def _map_world_to_screen(self, point: Tuple[float, float]) -> Optional[Tuple[int, int]]:
         """Convert map coordinates to mini-map screen coordinates."""
@@ -572,49 +690,79 @@ class ManualModeManager:
             selected_card.selected = True
         return selected_card
     def _build_package_page(self):
-        """Build package cards for current page (3x3 grid)."""
+        """Build package cards for current page."""
         self.package_cards.clear()
+
+        if not self.packages_section_rect:
+            return
+
+        spacing_x = 18
+        spacing_y = 18
+        min_card_width = 140
+        rows_per_view = 3  # Number of rows to display per page
+
+        available_width = max(90, self.packages_section_rect.width - 32)
+        cols = 3
+        while cols > 1:
+            potential_width = (available_width - spacing_x * (cols - 1)) // cols
+            if potential_width >= min_card_width:
+                break
+            cols -= 1
+
+        if cols == 1:
+            card_width = min(available_width, max(100, available_width))
+        else:
+            card_width = (available_width - spacing_x * (cols - 1)) // cols
+
+        card_height = 140
+
+        # Update pagination based on available columns
+        previous_per_page = self.packages_per_page
+        self.packages_per_page = max(1, cols * rows_per_view)
+        if previous_per_page != self.packages_per_page:
+            total_pages = max(1, math.ceil(len(self.all_packages) / self.packages_per_page))
+            if self.package_page >= total_pages:
+                self.package_page = total_pages - 1
 
         start_idx = self.package_page * self.packages_per_page
         end_idx = min(start_idx + self.packages_per_page, len(self.all_packages))
 
-        # 3x3 grid layout
-        cols = 3
-        spacing_x = 8
-        spacing_y = 10
-        available_width = max(90, self.packages_section_rect.width - 16)
-        card_width = max(90, (available_width - spacing_x * (cols - 1)) // cols)
-        card_height = 70
-        start_x = self.packages_section_rect.x + 8
-        start_y = self.packages_section_rect.y + 8
+        total_width = cols * card_width + spacing_x * (cols - 1)
+        base_y = self.base_packages_y + self.packages_header_height
+        start_x = self.packages_section_rect.x + max(16, (self.packages_section_rect.width - total_width) // 2)
+        start_y = base_y
 
         for i in range(start_idx, end_idx):
             pkg = self.all_packages[i]
             local_idx = i - start_idx
 
-            row = local_idx // 3
-            col = local_idx % 3
+            row = local_idx // cols
+            col = local_idx % cols
 
             x = start_x + col * (card_width + spacing_x)
             y = start_y + row * (card_height + spacing_y)
 
             card = PackageCard(pkg, x, y, card_width, card_height)
-            card.base_y = y  # Store base position for scrolling
+            card.base_y = y
 
-            # Check if assigned
             if pkg.id in self.assignments:
                 card.assigned_vehicle_id = self.assignments[pkg.id]
 
             self.package_cards.append(card)
 
-        # Update button states
-        total_pages = (len(self.all_packages) + self.packages_per_page - 1) // self.packages_per_page
+        total_pages = max(1, math.ceil(len(self.all_packages) / self.packages_per_page))
         if self.pkg_prev_btn:
             self.pkg_prev_btn.enabled = self.package_page > 0
         if self.pkg_next_btn:
             self.pkg_next_btn.enabled = self.package_page < total_pages - 1
 
-        # Apply scroll offset
+        rows = max(1, math.ceil(max(1, end_idx - start_idx) / cols))
+        required_height = rows * (card_height + spacing_y) - spacing_y + self.packages_header_height + 16
+        visible_height = self.packages_section_rect.height
+        self.max_content_scroll = max(0, required_height - visible_height)
+        if self.content_scroll_offset > self.max_content_scroll:
+            self.content_scroll_offset = self.max_content_scroll
+
         self._apply_scroll_offset()
 
     def _build_vehicle_page(self, delivery_map: Optional[DeliveryMap] = None):
@@ -630,11 +778,12 @@ class ManualModeManager:
         end_idx = min(start_idx + self.vehicles_per_page, len(self.all_vehicles))
 
         # Vertical stacking
-        card_width = self.vehicles_section_rect.width - 16
-        card_height = 95
-        spacing_y = 10
-        start_x = self.vehicles_section_rect.x + 8
-        start_y = self.vehicles_section_rect.y + 8
+        card_width = self.vehicles_section_rect.width - 24
+        card_height = 120
+        spacing_y = 16
+        start_x = self.vehicles_section_rect.x + 12
+        base_y = self.base_vehicles_y + self.vehicles_header_height
+        start_y = base_y
 
         for i in range(start_idx, end_idx):
             veh = self.all_vehicles[i]
@@ -788,6 +937,12 @@ class ManualModeManager:
             result['data'] = routes
             return result
 
+        if self.reset_btn and self.reset_btn.handle_event(event):
+            cleared = self.clear_assignments()
+            result['action'] = 'assignments_cleared'
+            result['data'] = cleared
+            return result
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.map_section_rect and self.map_section_rect.collidepoint(event.pos):
                 pkg = self._get_package_at_screen_pos(event.pos)
@@ -858,6 +1013,7 @@ class ManualModeManager:
                         other.selected = False
 
                 self.selected_package = pkg_card if pkg_card.selected else None
+                self._update_action_buttons()
                 result['action'] = 'package_selected'
                 result['data'] = self.selected_package
                 return result
@@ -871,6 +1027,7 @@ class ManualModeManager:
                         other.selected = False
 
                 self.selected_vehicle = veh_card if veh_card.selected else None
+                self._update_action_buttons()
                 result['action'] = 'vehicle_selected'
                 result['data'] = self.selected_vehicle
                 return result
@@ -1050,23 +1207,16 @@ class ManualModeManager:
         pygame.draw.rect(surface, Colors.PANEL_BG, self.rect, border_radius=8)
         pygame.draw.rect(surface, Colors.BORDER_LIGHT, self.rect, 2, border_radius=8)
 
-        # Title and instructions
-        font_title = pygame.font.SysFont('arial', 16, bold=True)
-        font_small = pygame.font.SysFont('arial', 11)
-
+        # Title
+        font_title = pygame.font.SysFont('arial', 24, bold=True)
         title_text = font_title.render("MANUAL MODE", True, Colors.TEXT_ACCENT)
-        surface.blit(title_text, (self.rect.x + 10, self.rect.y + 8))
-
-        inst_text = font_small.render(self.instruction_text, True, Colors.TEXT_SECONDARY)
-        surface.blit(inst_text, (self.rect.x + 120, self.rect.y + 12))
-
-        # Show scroll hint if scrollable
-        if self.max_content_scroll > 0:
-            scroll_hint = font_small.render("(Scroll with mouse wheel)", True, Colors.TEXT_ACCENT)
-            surface.blit(scroll_hint, (self.rect.x + self.rect.width - 140, self.rect.y + 12))
+        surface.blit(title_text, (self.rect.x + 18, self.rect.y + 10))
 
         if self.close_btn:
             self.close_btn.render(surface)
+
+        if self.summary_rect:
+            self._render_summary(surface)
 
         if self.map_section_rect:
             self._render_map_section(surface)
@@ -1078,19 +1228,13 @@ class ManualModeManager:
         if self.vehicles_section_rect:
             self._render_vehicles_section(surface)
 
-        # Render navigation buttons
-        if self.pkg_prev_btn:
-            self.pkg_prev_btn.render(surface)
-        if self.pkg_next_btn:
-            self.pkg_next_btn.render(surface)
+        # Render primary action buttons
         if self.assign_btn:
             self.assign_btn.render(surface)
-        if self.veh_prev_btn:
-            self.veh_prev_btn.render(surface)
-        if self.veh_next_btn:
-            self.veh_next_btn.render(surface)
         if self.plan_btn:
             self.plan_btn.render(surface)
+        if self.reset_btn:
+            self.reset_btn.render(surface)
 
         # Render scroll indicators
         if self.max_content_scroll > 0:
@@ -1184,16 +1328,43 @@ class ManualModeManager:
         pygame.draw.rect(surface, Colors.BG_DARK, self.packages_section_rect, border_radius=5)
         pygame.draw.rect(surface, Colors.BORDER_LIGHT, self.packages_section_rect, 1, border_radius=5)
 
-        # Section title with page info
-        font_header = pygame.font.SysFont('arial', 12, bold=True)
         total_pages = max(1, (len(self.all_packages) + self.packages_per_page - 1) // self.packages_per_page)
-        # title = font_header.render(
-        #     f"PACKAGES (Page {self.package_page + 1}/{total_pages})",
-        #     True, Colors.TEXT_ACCENT
-        # )
-        # surface.blit(title, (self.packages_section_rect.x + 5, self.packages_section_rect.y - 15))
+        header_text = self.section_header_font.render(
+            f"Packages · Page {self.package_page + 1}/{total_pages}",
+            True,
+            Colors.TEXT_ACCENT,
+        )
 
-        # Render package cards
+        header_y = self.packages_section_rect.y + 10
+        surface.blit(header_text, (self.packages_section_rect.x + 12, header_y))
+
+        assigned_text = self.section_hint_font.render(
+            f"Assigned {len(self.assignments)}", True, Colors.TEXT_SECONDARY
+        )
+        surface.blit(
+            assigned_text,
+            (
+                self.packages_section_rect.right - assigned_text.get_width() - 16,
+                header_y,
+            ),
+        )
+
+        if self.pkg_prev_btn and self.pkg_next_btn:
+            prev_x = self.packages_section_rect.x + 12 + header_text.get_width() + 18
+            btn_y = header_y - 2
+            self.pkg_prev_btn.rect.topleft = (prev_x, btn_y)
+            next_x = prev_x + self.pkg_prev_btn.rect.width + 10
+            self.pkg_next_btn.rect.topleft = (next_x, btn_y)
+            self.pkg_prev_btn.render(surface)
+            self.pkg_next_btn.render(surface)
+
+        if self.max_content_scroll > 0:
+            scroll_hint = self.section_hint_font.render("Scroll to browse", True, Colors.TEXT_ACCENT)
+            surface.blit(
+                scroll_hint,
+                (self.packages_section_rect.x + 12, header_y + 16),
+            )
+
         for pkg_card in self.package_cards:
             pkg_card.render(surface)
 
@@ -1204,13 +1375,34 @@ class ManualModeManager:
         pygame.draw.rect(surface, Colors.BORDER_LIGHT, self.vehicles_section_rect, 1, border_radius=5)
 
         # Section title with page info
-        font_header = pygame.font.SysFont('arial', 12, bold=True)
         total_pages = max(1, (len(self.all_vehicles) + self.vehicles_per_page - 1) // self.vehicles_per_page)
-        title = font_header.render(
-            f"VEHICLES (Page {self.vehicle_page + 1}/{total_pages})",
-            True, Colors.TEXT_ACCENT
+        title = self.section_header_font.render(
+            f"Vehicles · Page {self.vehicle_page + 1}/{total_pages}",
+            True,
+            Colors.TEXT_ACCENT,
         )
-        surface.blit(title, (self.vehicles_section_rect.x + 5, self.vehicles_section_rect.y - 15))
+        header_y = self.vehicles_section_rect.y + 10
+        surface.blit(title, (self.vehicles_section_rect.x + 12, header_y))
+
+        hint = self.section_hint_font.render(
+            "Click to focus a vehicle", True, Colors.TEXT_SECONDARY
+        )
+        surface.blit(
+            hint,
+            (
+                self.vehicles_section_rect.right - hint.get_width() - 16,
+                header_y,
+            ),
+        )
+
+        if self.veh_prev_btn and self.veh_next_btn:
+            prev_x = self.vehicles_section_rect.x + 12 + title.get_width() + 18
+            btn_y = header_y - 2
+            self.veh_prev_btn.rect.topleft = (prev_x, btn_y)
+            next_x = prev_x + self.veh_prev_btn.rect.width + 10
+            self.veh_next_btn.rect.topleft = (next_x, btn_y)
+            self.veh_prev_btn.render(surface)
+            self.veh_next_btn.render(surface)
 
         # Render vehicle cards
         for veh_card in self.vehicle_cards:

@@ -1526,6 +1526,12 @@ class DeliveryFleetApp:
                         self.show_warning("Assign packages before planning!", Colors.PROFIT_NEGATIVE)
                     continue
 
+                elif result['action'] == 'assignments_cleared':
+                    if result.get('data'):
+                        self.show_warning("Cleared manual assignments.", Colors.TEXT_SECONDARY)
+                    self._set_manual_preview(None)
+                    continue
+
                 elif result['action'] == 'close':
                     self.on_mode_auto()
                     continue
