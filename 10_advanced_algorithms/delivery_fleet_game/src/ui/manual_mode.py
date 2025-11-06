@@ -298,7 +298,7 @@ class ManualModeManager:
     Uses pagination for packages and vehicles to avoid UI flooding.
     """
 
-    def __init__(self, x: int, y: int, width: int, height: int):
+    def __init__(self, x: int, y: int, width: int, height: int, modal: bool = False):
         """
         Initialize manual mode manager.
 
@@ -308,6 +308,7 @@ class ManualModeManager:
         """
         self.rect = pygame.Rect(x, y, width, height)
         self.active = False
+        self.is_modal = modal
 
         # All items
         self.all_packages: List[Package] = []
@@ -318,6 +319,7 @@ class ManualModeManager:
         self.vehicle_cards: List[VehicleCard] = []
         self.selected_vehicle: Optional[VehicleCard] = None
         self.selected_package: Optional[PackageCard] = None
+        self.close_btn = None
 
         # Pagination
         self.package_page = 0
@@ -346,6 +348,10 @@ class ManualModeManager:
         # Instructions
         self.instruction_text = "Select vehicle → Click package (here or on map) to assign"
 
+    def update_rect(self, x: int, y: int, width: int, height: int):
+        """Update the manual mode panel geometry."""
+        self.rect.update(x, y, width, height)
+
     def setup(self, packages: List[Package], vehicles: List[Vehicle]):
         """
         Setup manual mode with current packages and vehicles.
@@ -366,6 +372,11 @@ class ManualModeManager:
         # Define layout sections
         header_height = 30
         nav_button_height = 25
+        close_btn_width = 110
+        close_btn_height = 26
+        close_btn_x = int(self.rect.right - close_btn_width - 12)
+        close_btn_y = int(self.rect.y + 6)
+        self.close_btn = Button(close_btn_x, close_btn_y, close_btn_width, close_btn_height, "Exit Manual")
 
         # Calculate ideal content height
         ideal_pkg_section_height = 250  # Ideal height for 3 rows of packages
@@ -622,6 +633,10 @@ class ManualModeManager:
                 self._apply_scroll_offset()
                 return result
 
+        if self.close_btn and self.close_btn.handle_event(event):
+            result['action'] = 'close'
+            return result
+
         # Handle navigation buttons
         if self.pkg_prev_btn and self.pkg_prev_btn.handle_event(event):
             return result
@@ -833,6 +848,18 @@ class ManualModeManager:
         if not self.active:
             return
 
+        if self.is_modal:
+            # Dim the background when presented as a modal popup
+            overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            surface.blit(overlay, (0, 0))
+
+            # Draw a subtle shadow behind the panel for depth
+            shadow_rect = self.rect.inflate(12, 12)
+            shadow_surface = pygame.Surface((shadow_rect.width, shadow_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(shadow_surface, (0, 0, 0, 120), shadow_surface.get_rect(), border_radius=10)
+            surface.blit(shadow_surface, (shadow_rect.x, shadow_rect.y))
+
         # Background panel
         pygame.draw.rect(surface, Colors.PANEL_BG, self.rect, border_radius=8)
         pygame.draw.rect(surface, Colors.BORDER_LIGHT, self.rect, 2, border_radius=8)
@@ -851,6 +878,9 @@ class ManualModeManager:
         if self.max_content_scroll > 0:
             scroll_hint = font_small.render("(Scroll with mouse wheel)", True, Colors.TEXT_ACCENT)
             surface.blit(scroll_hint, (self.rect.x + self.rect.width - 140, self.rect.y + 12))
+
+        if self.close_btn:
+            self.close_btn.render(surface)
 
         # Render sections
         if self.packages_section_rect:

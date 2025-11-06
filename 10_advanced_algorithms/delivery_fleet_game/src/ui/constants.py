@@ -18,7 +18,7 @@ SIDEBAR_RIGHT_X = SIDEBAR_X + SIDEBAR_WIDTH + SIDEBAR_GAP
 
 # Window Dimensions
 WINDOW_WIDTH = MAP_WIDTH + SIDEBAR_WIDTH + SIDEBAR_GAP + SECONDARY_SIDEBAR_WIDTH
-WINDOW_HEIGHT = 1000  # Back to standard, will use scrolling for manual mode if needed
+WINDOW_HEIGHT = 860  # Slightly shorter window; manual mode now uses a popup overlay
 FPS = 60
 
 TITLE_BAR_HEIGHT = 100
