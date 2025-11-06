@@ -213,6 +213,12 @@ class DeliveryFleetApp:
             self.engine.register_agent("agent_r", RAgent(self.engine.delivery_map))
         except Exception as exc:
             print(f"⚠️ Failed to register Agent R: {exc}")
+        try:
+            from src.agents.agent_r_neural import NeuralRAgent
+
+            self.engine.register_agent("agent_r_neural", NeuralRAgent(self.engine.delivery_map))
+        except Exception as exc:
+            print(f"⚠️ Failed to register Agent R Neural: {exc}")
         self.engine.register_agent("backtracking", BacktrackingAgent(self.engine.delivery_map, max_packages=12))
         self.engine.register_agent("pruning_backtracking",
                                    PruningBacktrackingAgent(self.engine.delivery_map, max_packages=15))
@@ -300,6 +306,7 @@ class DeliveryFleetApp:
         self.custom_radio_spacing = 35
         self.custom_agent_radios = [
             RadioButton(self.custom_radio_x, custom_radio_y, "Agent R", "agent", "agent_r"),
+            RadioButton(self.custom_radio_x, custom_radio_y + self.custom_radio_spacing, "Agent R Neural", "agent", "agent_r_neural"),
         ]
 
         for radio in self.agent_radios + self.custom_agent_radios:
