@@ -13,7 +13,7 @@ any reason, keeping the gameplay experience stable.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Dict
 
 import numpy as np
 
@@ -163,6 +163,7 @@ class NeuralRAgent(RouteAgent):
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.router = Router()
+        self.model_cache: Dict[str, PolicyNet] = {}
 
     def plan_routes(self, packages: List[Package], fleet: List[Vehicle]) -> List[Route]:
         if not self.validate_inputs(packages, fleet):
@@ -205,7 +206,7 @@ class NeuralRAgent(RouteAgent):
         if env.max_actions == 0:
             return list(packages), [pkg.destination for pkg in packages]
 
-        model = PolicyNet(env.state_dim, self.hidden_dim, env.max_actions)
+        model = self._load_or_init_model(vehicle.id, env.state_dim, env.max_actions)
 
         for episode in range(self.training_episodes):
             self._run_episode(env, model)
@@ -217,7 +218,15 @@ class NeuralRAgent(RouteAgent):
             ordered_packages = self.router.optimize_package_sequence(list(packages), self.delivery_map, use_2opt=False)
             stops = [pkg.destination for pkg in ordered_packages]
 
+        self.model_cache[vehicle.id] = model
         return ordered_packages, stops
+
+    def _load_or_init_model(self, vehicle_id: str, state_dim: int, action_dim: int) -> PolicyNet:
+        """Reuse an existing policy network if the shape matches, otherwise create a new one."""
+        cached = self.model_cache.get(vehicle_id)
+        if cached and cached.W1.shape[0] == state_dim and cached.W2.shape[1] == action_dim:
+            return cached
+        return PolicyNet(state_dim, self.hidden_dim, action_dim)
 
     def _run_episode(self, env: DeliveryEnv, model: PolicyNet) -> None:
         state = env.reset()

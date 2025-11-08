@@ -11,7 +11,7 @@ Usage:
 import sys
 import pygame
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Set, Tuple
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -193,7 +193,6 @@ class DeliveryFleetApp:
         # Game state
         self.planned_routes = []
         self.package_status = {}
-        self.agent_metrics_preview = {}
         self.render_routes = []
 
         # Start new game
@@ -295,6 +294,11 @@ class DeliveryFleetApp:
         self.manual_revenue_color = Colors.TEXT_SECONDARY
         self._set_auto_preview(None)
         self._set_manual_preview(None)
+        self.agent_metrics_preview: Dict[str, dict] = {}
+        self.agent_metrics_cache: Dict[str, dict] = {}
+        self.lazy_agents: Set[str] = {"backtracking", "agent_r_neural"}
+        self.lazy_pending_agents: Set[str] = set(self.lazy_agents)
+        self._agent_preview_signature: Optional[Tuple[int, Tuple[str, ...]]] = None
 
         # Agent radio buttons - positioned in AGENTS panel
         self.agent_list_top_offset = self.agent_panel.header_height + 10
@@ -576,13 +580,57 @@ class DeliveryFleetApp:
         metrics['agent_name'] = agent_name
         return metrics
 
+    def _compute_preview_signature(self, state) -> Optional[Tuple[int, Tuple[str, ...]]]:
+        """Build a signature describing the current pending-package state."""
+        if not state or not state.packages_pending:
+            return None
+        pkg_ids = tuple(sorted(pkg.id for pkg in state.packages_pending))
+        return (state.current_day, pkg_ids)
+
+    def _ensure_preview_cache_valid(self) -> None:
+        """Reset cached metrics if the pending-package state changed."""
+        signature = self._compute_preview_signature(self.engine.game_state)
+        if signature != self._agent_preview_signature:
+            self._agent_preview_signature = signature
+            self.agent_metrics_cache = {}
+            self.agent_metrics_preview = {}
+            self.lazy_pending_agents = set(self.lazy_agents)
+
+    def _ensure_agent_metrics_cached(self, agent_name: str) -> Optional[dict]:
+        """Compute and store agent metrics if not already cached."""
+        self._ensure_preview_cache_valid()
+        metrics = self.agent_metrics_cache.get(agent_name)
+        if metrics:
+            return metrics
+        metrics = self._simulate_agent_metrics(agent_name)
+        if metrics:
+            self.agent_metrics_cache[agent_name] = metrics
+            self.lazy_pending_agents.discard(agent_name)
+        return metrics
+
+    def _best_revenue_metrics(self) -> Optional[dict]:
+        """Return the cached metrics entry with the highest revenue."""
+        best = None
+        best_value = float("-inf")
+        for metrics in self.agent_metrics_preview.values():
+            revenue = metrics.get('total_revenue')
+            if revenue is None:
+                continue
+            if revenue > best_value:
+                best_value = revenue
+                best = metrics
+        return best
+
     def update_agent_previews(self, metrics_override: Optional[dict] = None) -> None:
         """Update agent radio labels with projected profit values."""
         state = self.engine.game_state
         all_radios = self.agent_radios + self.custom_agent_radios
         if not state or not state.packages_pending:
-            self._set_auto_preview(None)
+            self._agent_preview_signature = None
+            self.agent_metrics_cache = {}
+            self.lazy_pending_agents = set(self.lazy_agents)
             self.agent_metrics_preview = {}
+            self._set_auto_preview(None)
             for radio in all_radios:
                 if radio.value in self.disabled_agents:
                     radio.set_extra("Unavailable", Colors.TEXT_SECONDARY)
@@ -590,19 +638,31 @@ class DeliveryFleetApp:
                     radio.set_extra("", Colors.TEXT_SECONDARY)
             return
 
+        self._ensure_preview_cache_valid()
+
         previews = {}
         if metrics_override and metrics_override.get('agent_name'):
             previews[metrics_override['agent_name']] = metrics_override
+            self.agent_metrics_cache[metrics_override['agent_name']] = metrics_override
+            self.lazy_pending_agents.discard(metrics_override['agent_name'])
 
         for radio in all_radios:
             if radio.value in self.disabled_agents or radio.value in previews:
                 continue
+            cached = self.agent_metrics_cache.get(radio.value)
+            if cached:
+                previews[radio.value] = cached
+                continue
+            if radio.value in self.lazy_pending_agents:
+                continue
             metrics = self._simulate_agent_metrics(radio.value)
             if metrics:
                 previews[radio.value] = metrics
+                self.agent_metrics_cache[radio.value] = metrics
 
         self.agent_metrics_preview = previews
-        self._set_auto_preview(previews.get(self.selected_agent))
+        best_metrics = self._best_revenue_metrics()
+        self._set_auto_preview(best_metrics)
 
         for radio in all_radios:
             if radio.value in self.disabled_agents:
@@ -615,7 +675,10 @@ class DeliveryFleetApp:
                 sign = "+" if profit >= 0 else "-"
                 radio.set_extra(f"{sign}${abs(profit):,.0f}", color)
             else:
-                radio.set_extra("", Colors.TEXT_SECONDARY)
+                if radio.value in self.lazy_pending_agents:
+                    radio.set_extra("Click to calc", Colors.TEXT_SECONDARY)
+                else:
+                    radio.set_extra("", Colors.TEXT_SECONDARY)
 
         self._ensure_valid_agent_selection()
 
@@ -1567,7 +1630,12 @@ class DeliveryFleetApp:
                                 if other is not radio:
                                     other.selected = False
                             self.selected_agent = radio.value
-                            self._set_auto_preview(self.agent_metrics_preview.get(self.selected_agent))
+                            metrics = self._ensure_agent_metrics_cached(radio.value)
+                            if self.mode != "AUTO":
+                                if metrics:
+                                    self.update_agent_previews(metrics_override=metrics)
+                                else:
+                                    self.update_agent_previews()
                             if self.mode == "AUTO":
                                 self.auto_plan_routes(show_feedback=True)
                             break
@@ -1578,7 +1646,12 @@ class DeliveryFleetApp:
                                 if other is not radio:
                                     other.selected = False
                             self.selected_agent = radio.value
-                            self._set_auto_preview(self.agent_metrics_preview.get(self.selected_agent))
+                            metrics = self._ensure_agent_metrics_cached(radio.value)
+                            if self.mode != "AUTO":
+                                if metrics:
+                                    self.update_agent_previews(metrics_override=metrics)
+                                else:
+                                    self.update_agent_previews()
                             if self.mode == "AUTO":
                                 self.auto_plan_routes(show_feedback=True)
                             break
